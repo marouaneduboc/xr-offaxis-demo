@@ -1,5 +1,5 @@
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
-import * as GaussianSplats3D from "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/+esm";
+import { PLYLoader } from "https://unpkg.com/three@0.160.0/examples/jsm/loaders/PLYLoader.js?module";
 import { FaceTracker } from "./face-tracker.js";
 
 const canvas = document.getElementById("scene-canvas");
@@ -7,13 +7,12 @@ const statusText = document.getElementById("status-text");
 const trackingBtn = document.getElementById("toggle-tracking-btn");
 const resetBtn = document.getElementById("reset-view-btn");
 const recenterPortalBtn = document.getElementById("recenter-portal-btn");
-const splatUploadInput = document.getElementById("splat-upload");
-const splatScaleInput = document.getElementById("splat-scale");
+const pointCloudUploadInput = document.getElementById("splat-upload");
+const zoomInput = document.getElementById("splat-scale");
 const lookButtons = document.querySelectorAll(".look-btn");
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b1123);
-scene.fog = null;
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -25,7 +24,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const camera = new THREE.PerspectiveCamera(70, 1, 0.03, 200);
-const portalBasePosition = new THREE.Vector3(0, 0, 0.15);
+const portalBasePosition = new THREE.Vector3(0, 0, 0.55);
 const portalBaseTarget = new THREE.Vector3(0, 0, -1);
 const portalBaseQuaternion = new THREE.Quaternion();
 const portalForward = new THREE.Vector3(0, 0, -1);
@@ -34,9 +33,7 @@ let portalPitch = 0;
 let dragLookActive = false;
 let lastDragX = 0;
 let lastDragY = 0;
-updatePortalBaseCamera();
 
-const clock = new THREE.Clock();
 const poseOffset = new THREE.Vector3();
 const poseEuler = new THREE.Euler();
 const poseQuaternion = new THREE.Quaternion();
@@ -44,12 +41,13 @@ const poseQuaternion = new THREE.Quaternion();
 const poseState = {
   face: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 },
   orientation: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 },
-  source: "portal",
 };
 
 let orientationEnabled = false;
 let faceTrackingEnabled = false;
 let portalZoom = 1;
+let activePointCloud = null;
+let activePointCloudUrl = null;
 
 const portalCalibration = {
   screenWidthCm: 60,
@@ -62,27 +60,19 @@ const portalCalibration = {
 
 const root = new THREE.Group();
 scene.add(root);
-let activeSplatViewer = null;
-let activeSplatBlobUrl = null;
 
 const hemiLight = new THREE.HemisphereLight(0xb4ccff, 0x334466, 0.95);
 scene.add(hemiLight);
 
 const dirLight = new THREE.DirectionalLight(0xffffff, 1.15);
 dirLight.position.set(5, 8, 3);
-dirLight.castShadow = false;
 scene.add(dirLight);
 
 const ground = new THREE.Mesh(
   new THREE.CircleGeometry(18, 48),
-  new THREE.MeshStandardMaterial({
-    color: 0x18233f,
-    roughness: 0.92,
-    metalness: 0.05,
-  }),
+  new THREE.MeshStandardMaterial({ color: 0x18233f, roughness: 0.92, metalness: 0.05 }),
 );
 ground.rotation.x = -Math.PI * 0.5;
-ground.position.y = 0;
 scene.add(ground);
 
 const grid = new THREE.GridHelper(20, 32, 0x7ba4ff, 0x35508f);
@@ -97,11 +87,11 @@ scene.add(character);
 const faceTracker = new FaceTracker({
   onPose: (pose) => {
     poseState.face = pose;
-    poseState.source = "face";
   },
   onStatus: setStatus,
 });
 
+updatePortalBaseCamera();
 setupUiEvents();
 setupOrientationFallback();
 onResize();
@@ -109,7 +99,6 @@ animate();
 
 function createCharacter() {
   const group = new THREE.Group();
-
   const body = new THREE.Mesh(
     new THREE.CapsuleGeometry(0.3, 0.75, 8, 16),
     new THREE.MeshStandardMaterial({ color: 0x6ea8ff, roughness: 0.42, metalness: 0.25 }),
@@ -123,8 +112,6 @@ function createCharacter() {
   );
   stand.position.y = 0.1;
   group.add(stand);
-
-  group.position.set(0, 0, 0);
   return group;
 }
 
@@ -132,9 +119,8 @@ function setupUiEvents() {
   trackingBtn.addEventListener("click", toggleTracking);
   resetBtn.addEventListener("click", resetView);
   recenterPortalBtn.addEventListener("click", recenterPortal);
-
-  splatUploadInput.addEventListener("change", onSplatUploadChange);
-  splatScaleInput.addEventListener("input", onSplatScaleChange);
+  pointCloudUploadInput.addEventListener("change", onPointCloudUploadChange);
+  zoomInput.addEventListener("input", onZoomChange);
 
   lookButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -157,12 +143,12 @@ async function toggleTracking() {
     faceTracker.stop();
     faceTrackingEnabled = false;
     trackingBtn.textContent = "Enable Face Tracking";
-    poseState.source = orientationEnabled ? "orientation" : "portal";
     return;
   }
 
   if (!navigator.mediaDevices?.getUserMedia) {
-    setStatus("Webcam API unavailable. Falling back to manual/orientation controls.");
+    setStatus("Webcam API unavailable. Trying orientation fallback.");
+    if (!orientationEnabled) await enableOrientationFallback();
     return;
   }
 
@@ -173,10 +159,7 @@ async function toggleTracking() {
     setStatus("Face tracking active.");
   } catch (error) {
     setStatus(`Could not start face tracking: ${error.message}`);
-    if (!orientationEnabled) {
-      const started = await enableOrientationFallback();
-      if (!started) poseState.source = "portal";
-    }
+    if (!orientationEnabled) await enableOrientationFallback();
   }
 }
 
@@ -208,7 +191,6 @@ async function enableOrientationFallback() {
     window.addEventListener("deviceorientation", onDeviceOrientation, { passive: true });
     orientationEnabled = true;
   }
-  poseState.source = faceTrackingEnabled ? "face" : "orientation";
   setStatus("Using device orientation fallback.");
   return true;
 }
@@ -218,22 +200,20 @@ function onDeviceOrientation(event) {
   const gamma = THREE.MathUtils.clamp(event.gamma ?? 0, -45, 45);
   const beta = THREE.MathUtils.clamp(event.beta ?? 0, -60, 60);
   const alpha = THREE.MathUtils.degToRad(event.alpha ?? 0);
-
   poseState.orientation.x = THREE.MathUtils.clamp(gamma / 45, -1, 1);
   poseState.orientation.y = THREE.MathUtils.clamp(beta / 60, -1, 1);
   poseState.orientation.z = 0;
   poseState.orientation.yaw = THREE.MathUtils.clamp(gamma / 60, -1, 1);
   poseState.orientation.pitch = THREE.MathUtils.clamp(beta / 70, -1, 1);
   poseState.orientation.roll = Math.sin(alpha) * 0.25;
-  poseState.source = "orientation";
 }
 
 function resetView() {
   poseState.face = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   poseState.orientation = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
-  recenterPortal();
   portalZoom = 1;
-  splatScaleInput.value = "1";
+  zoomInput.value = "1";
+  recenterPortal();
   setStatus("View reset.");
 }
 
@@ -292,6 +272,17 @@ function getActivePose() {
   return clampPose({ x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 });
 }
 
+function clampPose(pose) {
+  return {
+    x: THREE.MathUtils.clamp(pose.x, -0.65, 0.65),
+    y: THREE.MathUtils.clamp(pose.y, -0.65, 0.65),
+    z: THREE.MathUtils.clamp(pose.z, -0.65, 0.65),
+    yaw: THREE.MathUtils.clamp(pose.yaw ?? 0, -0.9, 0.9),
+    pitch: THREE.MathUtils.clamp(pose.pitch ?? 0, -0.9, 0.9),
+    roll: THREE.MathUtils.clamp(pose.roll ?? 0, -0.9, 0.9),
+  };
+}
+
 function applyOffAxisProjection(pose) {
   const near = camera.near;
   const far = camera.far;
@@ -319,7 +310,6 @@ function applyOffAxisProjection(pose) {
 
   poseOffset.set(eyeX, eyeY, eyeZ);
   camera.position.copy(poseOffset);
-
   poseEuler.set(pose.pitch * 0.08, -pose.yaw * 0.1, pose.roll * 0.08);
   poseQuaternion.setFromEuler(poseEuler);
   camera.quaternion.copy(portalBaseQuaternion).multiply(poseQuaternion);
@@ -341,214 +331,60 @@ function makeFrustum(left, right, bottom, top, near, far) {
   );
 }
 
-async function onSplatUploadChange(event) {
+async function onPointCloudUploadChange(event) {
   const file = event.target.files?.[0];
   if (!file) return;
-  const sceneFormat = getSplatSceneFormat(file.name);
-  if (!sceneFormat) {
-    setStatus("Please select a .ply, .compressed.ply, .splat, .ksplat, or .spz file.");
+  if (!file.name.toLowerCase().endsWith(".ply")) {
+    setStatus("Point cloud mode currently supports .ply only.");
     return;
   }
 
-  if (activeSplatBlobUrl) URL.revokeObjectURL(activeSplatBlobUrl);
-  const directUrl = URL.createObjectURL(file);
-  activeSplatBlobUrl = directUrl;
-  const directLoaded = await loadSplatFromUrl(directUrl, file.name, sceneFormat);
-  if (directLoaded) return;
-
-  URL.revokeObjectURL(directUrl);
-  activeSplatBlobUrl = null;
-  setStatus("Direct load failed, trying SuperSplat-style normalization...");
-
-  try {
-    const normalized = await normalizeWithSplatTransform(file);
-    const normalizedUrl = URL.createObjectURL(normalized.blob);
-    activeSplatBlobUrl = normalizedUrl;
-    const normalizedLoaded = await loadSplatFromUrl(
-      normalizedUrl,
-      `${file.name} (normalized)`,
-      GaussianSplats3D.SceneFormat.Ply,
-    );
-    if (!normalizedLoaded) {
-      setStatus("Load failed after normalization.");
-    }
-  } catch (error) {
-    setStatus(`Normalization failed: ${error.message}`);
-  }
+  if (activePointCloudUrl) URL.revokeObjectURL(activePointCloudUrl);
+  activePointCloudUrl = URL.createObjectURL(file);
+  await loadPointCloudFromUrl(activePointCloudUrl, file.name);
 }
 
-function onSplatScaleChange() {
-  portalZoom = Math.max(0.05, Number(splatScaleInput.value));
+function onZoomChange() {
+  portalZoom = Math.max(0.05, Number(zoomInput.value));
   setStatus(`Zoom: ${portalZoom.toFixed(2)}x`);
 }
 
-async function loadSplatFromUrl(url, label, sceneFormat) {
-  const loadAttempts = buildSplatLoadAttempts(sceneFormat);
-  let lastError = null;
+async function loadPointCloudFromUrl(url, label) {
+  const loader = new PLYLoader();
 
-  for (const attempt of loadAttempts) {
-    try {
-      if (activeSplatViewer) {
-        if (typeof activeSplatViewer.stop === "function") activeSplatViewer.stop();
-        if (typeof activeSplatViewer.dispose === "function") activeSplatViewer.dispose();
-        activeSplatViewer = null;
-      }
+  try {
+    const geometry = await loader.loadAsync(url);
+    geometry.computeBoundingSphere();
 
-      activeSplatViewer = createSplatViewer();
-
-      await activeSplatViewer.addSplatScene(url, {
-        format: attempt.format,
-        progressiveLoad: attempt.progressiveLoad,
-        splatAlphaRemovalThreshold: attempt.alphaThreshold,
-        // SuperSplat-like orientation baseline.
-        position: [0, 0, 0],
-        rotation: [0, 0, 1, 0],
-        scale: [1, 1, 1],
-        showLoadingUI: false,
-      });
-
-      setStatus(`Loaded splat: ${label} (${attempt.label})`);
-      return true;
-    } catch (error) {
-      lastError = error;
+    if (activePointCloud) {
+      root.remove(activePointCloud);
+      activePointCloud.geometry.dispose();
+      activePointCloud.material.dispose();
+      activePointCloud = null;
     }
+
+    const radius = geometry.boundingSphere?.radius ?? 1;
+    const hasColor = !!geometry.getAttribute("color");
+    const material = new THREE.PointsMaterial({
+      size: Math.max(0.002, radius * 0.01),
+      vertexColors: hasColor,
+      color: hasColor ? 0xffffff : 0x9fd0ff,
+      sizeAttenuation: true,
+    });
+
+    activePointCloud = new THREE.Points(geometry, material);
+    root.add(activePointCloud);
+    setStatus(`Loaded point cloud: ${label}`);
+  } catch (error) {
+    setStatus(`Point cloud load failed: ${error.message}`);
   }
-
-  if (activeSplatViewer) {
-    if (typeof activeSplatViewer.stop === "function") activeSplatViewer.stop();
-    if (typeof activeSplatViewer.dispose === "function") activeSplatViewer.dispose();
-    activeSplatViewer = null;
-  }
-
-  const suffix = lastError?.message ? ` ${lastError.message}` : "";
-  setStatus(`Splat load failed.${suffix}`);
-  return false;
-}
-
-function isSplatFile(name) {
-  const lower = name.toLowerCase();
-  return lower.endsWith(".ply") || lower.endsWith(".splat") || lower.endsWith(".ksplat");
-}
-
-function getSplatSceneFormat(name) {
-  const lower = name.toLowerCase();
-  if (lower.endsWith(".compressed.ply")) return GaussianSplats3D.SceneFormat.Ply;
-  if (lower.endsWith(".ply")) return GaussianSplats3D.SceneFormat.Ply;
-  if (lower.endsWith(".splat")) return GaussianSplats3D.SceneFormat.Splat;
-  if (lower.endsWith(".ksplat")) return GaussianSplats3D.SceneFormat.KSplat;
-  if (lower.endsWith(".spz")) return GaussianSplats3D.SceneFormat.Ply;
-  return null;
-}
-
-async function normalizeWithSplatTransform(file) {
-  const {
-    getInputFormat,
-    getOutputFormat,
-    MemoryFileSystem,
-    MemoryReadFileSystem,
-    readFile,
-    writeFile,
-  } = await import("https://cdn.jsdelivr.net/npm/@playcanvas/splat-transform@1.9.2/dist/index.mjs");
-
-  const inputName = file.name;
-  const readFs = new MemoryReadFileSystem();
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  readFs.set(inputName, bytes);
-
-  const tables = await readFile({
-    filename: inputName,
-    inputFormat: getInputFormat(inputName),
-    options: {
-      iterations: 10,
-      lodSelect: [0],
-      unbundled: false,
-      lodChunkCount: 512,
-      lodChunkExtent: 16,
-    },
-    params: [],
-    fileSystem: readFs,
-  });
-  if (!tables?.length) throw new Error("No splat table parsed.");
-
-  const outputName = "normalized.ply";
-  const outFs = new MemoryFileSystem();
-  await writeFile(
-    {
-      filename: outputName,
-      outputFormat: getOutputFormat(outputName, {}),
-      dataTable: tables[0],
-      options: {},
-    },
-    outFs,
-  );
-  const normalizedBytes = outFs.results.get(outputName);
-  if (!normalizedBytes) throw new Error("PLY normalization failed.");
-
-  return {
-    blob: new Blob([normalizedBytes], { type: "application/ply" }),
-  };
-}
-
-function createSplatViewer() {
-  return new GaussianSplats3D.Viewer({
-    selfDrivenMode: false,
-    renderer,
-    camera,
-    threeScene: scene,
-    useBuiltInControls: false,
-    gpuAcceleratedSort: false,
-    sharedMemoryForWorkers: false,
-    sphericalHarmonicsDegree: 0,
-    sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
-    // Keep output stable on GitHub Pages where COOP/COEP headers are unavailable.
-    integerBasedSort: false,
-  });
-}
-
-function buildSplatLoadAttempts(sceneFormat) {
-  return [
-    {
-      label: "format-locked non-progressive",
-      format: sceneFormat,
-      progressiveLoad: false,
-      alphaThreshold: 0,
-    },
-    {
-      label: "format-locked progressive",
-      format: sceneFormat,
-      progressiveLoad: true,
-      alphaThreshold: 0,
-    },
-    {
-      label: "auto-format non-progressive",
-      format: undefined,
-      progressiveLoad: false,
-      alphaThreshold: 0,
-    },
-  ];
-}
-
-function clampPose(pose) {
-  return {
-    x: THREE.MathUtils.clamp(pose.x, -0.65, 0.65),
-    y: THREE.MathUtils.clamp(pose.y, -0.65, 0.65),
-    z: THREE.MathUtils.clamp(pose.z, -0.65, 0.65),
-    yaw: THREE.MathUtils.clamp(pose.yaw ?? 0, -0.9, 0.9),
-    pitch: THREE.MathUtils.clamp(pose.pitch ?? 0, -0.9, 0.9),
-    roll: THREE.MathUtils.clamp(pose.roll ?? 0, -0.9, 0.9),
-  };
 }
 
 function animate() {
   requestAnimationFrame(animate);
   const pose = getActivePose();
   applyOffAxisProjection(pose);
-  if (activeSplatViewer) {
-    activeSplatViewer.update();
-    activeSplatViewer.render();
-  } else {
-    renderer.render(scene, camera);
-  }
+  renderer.render(scene, camera);
 }
 
 function onResize() {

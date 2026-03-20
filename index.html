@@ -15,11 +15,11 @@
       <aside id="ui-overlay">
         <h1>XR Off-Axis Projection Demo</h1>
         <p class="instructions">
-          Load a Gaussian splat (`.ply`, `.splat`, `.ksplat`), then move your head
-          to feel like you're looking through a portal into another world.
+          Load a `.ply` point cloud first, then move your head to feel like you're
+          looking through a portal into another world.
         </p>
         <ol class="quickstart">
-          <li>Press <strong>Load Splat File</strong> and pick your SHARP/3DGS file.</li>
+          <li>Press <strong>Load PLY Point Cloud</strong> and pick your `.ply` file.</li>
           <li>Adjust <strong>Zoom</strong> to frame the portal depth you want.</li>
           <li>Enable <strong>Face Tracking</strong> for portal parallax.</li>
           <li>Use <strong>Look</strong> buttons or drag on the scene to rotate the portal camera.</li>
@@ -33,8 +33,8 @@
         </div>
 
         <div class="model-loader">
-          <label for="splat-upload">Load Splat File</label>
-          <input id="splat-upload" type="file" accept=".ply,.compressed.ply,.splat,.ksplat,.spz" />
+          <label for="splat-upload">Load PLY Point Cloud</label>
+          <input id="splat-upload" type="file" accept=".ply" />
           <label for="splat-scale">Zoom</label>
           <input id="splat-scale" type="range" min="0.01" max="5" step="0.01" value="1" />
         </div>
