@@ -9,7 +9,8 @@ export class FaceTracker {
     this.faceMesh = null;
     this.running = false;
     this.frameRequest = null;
-    this.smoothedPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
+    this.smoothedPose = { x: 0.5, y: 0.5, z: 1, yaw: 0, pitch: 0, roll: 0 };
+    this.baseInterOcularDistance = 0.1;
   }
 
   async start() {
@@ -93,32 +94,42 @@ export class FaceTracker {
   }
 
   calculateHeadPose(landmarks) {
+    const leftEyeInner = landmarks[133];
+    const rightEyeInner = landmarks[362];
     const nose = landmarks[1];
     const leftEyeOuter = landmarks[33];
     const rightEyeOuter = landmarks[263];
-    const forehead = landmarks[10];
-    const chin = landmarks[152];
+
+    const faceX = (leftEyeInner.x + rightEyeInner.x + nose.x) / 3;
+    const faceY = (leftEyeInner.y + rightEyeInner.y + nose.y) / 3;
+
+    const interOcularDist = Math.sqrt(
+      Math.pow(rightEyeInner.x - leftEyeInner.x, 2) +
+      Math.pow(rightEyeInner.y - leftEyeInner.y, 2),
+    );
+    const eyeWidth = Math.sqrt(
+      Math.pow(rightEyeOuter.x - leftEyeOuter.x, 2) +
+      Math.pow(rightEyeOuter.y - leftEyeOuter.y, 2),
+    );
+    const depthProxy = (interOcularDist + eyeWidth * 0.5) / (this.baseInterOcularDistance * 1.5);
+
+    const clampedX = clamp(faceX, 0.2, 0.8);
+    const clampedY = clamp(faceY, 0.2, 0.8);
+    const clampedZ = clamp(depthProxy, 0.5, 2.0);
 
     const eyeCenterX = (leftEyeOuter.x + rightEyeOuter.x) * 0.5;
     const eyeCenterY = (leftEyeOuter.y + rightEyeOuter.y) * 0.5;
-    const eyeSpan = Math.max(0.001, Math.abs(rightEyeOuter.x - leftEyeOuter.x));
-    const faceHeight = Math.max(0.001, Math.abs(chin.y - forehead.y));
-
-    const x = (0.5 - nose.x) * 2.0;
-    const y = (0.5 - nose.y) * 2.0;
-    const z = (0.18 - eyeSpan) * 6.0;
     const yaw = (nose.x - eyeCenterX) * 7.0;
     const pitch = (nose.y - eyeCenterY) * 7.0;
     const roll = Math.atan2(rightEyeOuter.y - leftEyeOuter.y, rightEyeOuter.x - leftEyeOuter.x);
 
     return {
-      x: clamp(x, -1, 1),
-      y: clamp(y, -1, 1),
-      z: clamp(z, -1, 1),
+      x: clampedX,
+      y: clampedY,
+      z: clampedZ,
       yaw: clamp(yaw, -1.2, 1.2),
       pitch: clamp(pitch, -1.2, 1.2),
       roll: clamp(roll, -0.9, 0.9),
-      scale: faceHeight,
     };
   }
 

@@ -10,6 +10,8 @@
     <main id="app">
       <section id="canvas-wrap">
         <canvas id="scene-canvas" aria-label="3D off-axis projection scene"></canvas>
+        <iframe id="splat-viewer-frame" title="Gaussian splat viewer" loading="eager"></iframe>
+        <div id="viewer-drag-surface" aria-hidden="true"></div>
       </section>
 
       <aside id="ui-overlay">
@@ -34,18 +36,37 @@
 
         <div class="model-loader">
           <label for="splat-upload">Load Gaussian Splat / PLY</label>
-          <input id="splat-upload" type="file" accept=".ply,.compressed.ply,.splat,.ksplat,.spz" />
+          <input id="splat-upload" type="file" accept=".ply,.compressed.ply,.sog,.splat,.ksplat,.spz" />
           <label for="splat-scale">Zoom</label>
           <input id="splat-scale" type="range" min="0.01" max="8" step="0.01" value="1" />
+        </div>
+
+        <div class="calibration-panel">
+          <p class="calibration-title">Screen Calibration</p>
+          <div class="calibration-grid">
+            <label>
+              Width (cm)
+              <input id="screen-width-input" type="number" min="10" max="200" step="0.1" value="34" />
+            </label>
+            <label>
+              Height (cm)
+              <input id="screen-height-input" type="number" min="10" max="200" step="0.1" value="19" />
+            </label>
+            <label>
+              Distance (cm)
+              <input id="view-distance-input" type="number" min="20" max="200" step="0.1" value="60" />
+            </label>
+          </div>
+          <button id="save-calibration-btn" type="button">Save Calibration</button>
         </div>
 
         <div class="look-controls">
           <p class="look-title">Look Around</p>
           <div class="look-grid">
-            <button type="button" class="look-btn" data-look="up">Look Up</button>
-            <button type="button" class="look-btn" data-look="left">Look Left</button>
-            <button type="button" class="look-btn" data-look="right">Look Right</button>
-            <button type="button" class="look-btn" data-look="down">Look Down</button>
+            <button type="button" class="look-btn look-up" data-look="up" aria-label="Look Up">&#9650;</button>
+            <button type="button" class="look-btn look-left" data-look="left" aria-label="Look Left">&#9664;</button>
+            <button type="button" class="look-btn look-right" data-look="right" aria-label="Look Right">&#9654;</button>
+            <button type="button" class="look-btn look-down" data-look="down" aria-label="Look Down">&#9660;</button>
           </div>
         </div>
 
