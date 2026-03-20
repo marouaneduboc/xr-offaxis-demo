@@ -47,6 +47,8 @@ const portalForward = new THREE.Vector3(0, 0, -1);
 const defaultPortalPitch = 0;
 let portalYaw = 0;
 let portalPitch = defaultPortalPitch;
+let portalPanX = 0;
+let portalPanY = 0;
 let dragLookActive = false;
 let lastDragX = 0;
 let lastDragY = 0;
@@ -144,10 +146,10 @@ function setupUiEvents() {
   lookButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const direction = button.dataset.look;
-      if (direction === "left") rotatePortalView(0.18, 0);
-      if (direction === "right") rotatePortalView(-0.18, 0);
-      if (direction === "up") rotatePortalView(0, 0.12);
-      if (direction === "down") rotatePortalView(0, -0.12);
+      if (direction === "left") panPortalCamera(-0.06, 0);
+      if (direction === "right") panPortalCamera(0.06, 0);
+      if (direction === "up") panPortalCamera(0, 0.06);
+      if (direction === "down") panPortalCamera(0, -0.06);
     });
   });
 
@@ -243,6 +245,8 @@ function resetView() {
 function recenterPortal() {
   portalYaw = 0;
   portalPitch = defaultPortalPitch;
+  portalPanX = 0;
+  portalPanY = 0;
   updatePortalBaseCamera();
   updateViewerCamera(getActivePose());
   setStatus("Portal recentered.");
@@ -256,12 +260,21 @@ function toggleMenuOverlay() {
 
 function updatePortalBaseCamera() {
   const viewingDistanceM = getNeutralViewingDistance();
-  portalBasePosition.set(0, 0, viewingDistanceM);
+  portalBasePosition.set(portalPanX, portalPanY, viewingDistanceM);
   portalForward.set(0, 0, -1).applyEuler(new THREE.Euler(portalPitch, portalYaw, 0, "YXZ"));
   portalBaseTarget.copy(portalBasePosition).add(portalForward);
   camera.position.copy(portalBasePosition);
   camera.lookAt(portalBaseTarget);
   portalBaseQuaternion.copy(camera.quaternion);
+}
+
+function panPortalCamera(deltaX, deltaY) {
+  portalPanX = THREE.MathUtils.clamp(portalPanX + deltaX, -1.5, 1.5);
+  portalPanY = THREE.MathUtils.clamp(portalPanY + deltaY, -1.2, 1.2);
+  updatePortalBaseCamera();
+  if (viewerModeActive && viewerReady) syncViewerNeutralCamera();
+  updateViewerCamera(getActivePose());
+  setStatus("Camera panned.");
 }
 
 function rotatePortalView(deltaYaw, deltaPitch) {
@@ -338,11 +351,11 @@ function applyOffAxisProjection(pose) {
   camera.projectionMatrix.copy(frustum);
   camera.projectionMatrixInverse.copy(frustum).invert();
 
-  camera.position.set(eyeX, eyeY, eyeZ);
+  camera.position.set(eyeX + portalPanX, eyeY + portalPanY, eyeZ);
   poseOffset.set(0, 0, 0);
   poseEuler.set(portalPitch + pose.pitch * 0.08, portalYaw - pose.yaw * 0.1, pose.roll * 0.08, "YXZ");
   poseQuaternion.setFromEuler(poseEuler);
-  camera.lookAt(fallbackFocusPoint);
+  camera.lookAt(fallbackFocusPoint.x + portalPanX, fallbackFocusPoint.y + portalPanY, fallbackFocusPoint.z);
   portalBaseQuaternion.copy(camera.quaternion);
   camera.quaternion.copy(portalBaseQuaternion).multiply(poseQuaternion);
 }
@@ -986,8 +999,8 @@ function syncViewerNeutralCamera() {
 
   const neutralDistance = THREE.MathUtils.clamp(viewerFitDistance / Math.max(0.05, portalZoom), 0.14, 2.5);
   const viewerCamera = viewer.global.camera;
-  viewerCamera.setPosition(0, 0, neutralDistance);
-  viewerCamera.lookAt(0, 0, viewerDepthTarget);
+  viewerCamera.setPosition(portalPanX, portalPanY, neutralDistance);
+  viewerCamera.lookAt(portalPanX, portalPanY, viewerDepthTarget);
   if (viewerCamera.camera) viewerCamera.camera.calculateProjection = null;
   captureViewerBaseCamera();
 }
