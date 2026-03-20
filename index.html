@@ -16,13 +16,14 @@
         <h1>XR Off-Axis Projection Demo</h1>
         <p class="instructions">
           Load a Gaussian splat (`.ply`, `.splat`, `.ksplat`), then move your head
-          or use manual sliders to feel the off-axis depth effect.
+          or use manual nudges to feel the off-axis depth effect.
         </p>
         <ol class="quickstart">
           <li>Press <strong>Load Splat File</strong> and pick your SHARP/3DGS file.</li>
           <li>If the splat appears too large/small, adjust <strong>Splat Scale</strong>.</li>
           <li>Navigate: left-drag orbit, right-drag pan, wheel/pinch zoom.</li>
-          <li>Enable <strong>Face Tracking</strong> (or use Manual X/Y/Z sliders).</li>
+          <li>Use <strong>Inside View</strong> anytime to jump back inside the scene.</li>
+          <li>Enable <strong>Face Tracking</strong> (or use manual nudge controls).</li>
           <li>Drag the pawn to move it, or switch to rotate mode to spin it.</li>
         </ol>
 
@@ -30,6 +31,7 @@
           <button id="toggle-tracking-btn" type="button">Enable Face Tracking</button>
           <button id="toggle-rotate-btn" type="button">Rotate Mode: Off</button>
           <button id="reset-view-btn" type="button">Reset View</button>
+          <button id="inside-view-btn" type="button">Inside View</button>
         </div>
 
         <div class="model-loader">
@@ -39,19 +41,18 @@
           <input id="splat-scale" type="range" min="0.01" max="5" step="0.01" value="1" />
         </div>
 
-        <div class="sliders">
-          <label>
-            Manual X
-            <input id="manual-x" type="range" min="-1" max="1" step="0.01" value="0" />
-          </label>
-          <label>
-            Manual Y
-            <input id="manual-y" type="range" min="-1" max="1" step="0.01" value="0" />
-          </label>
-          <label>
-            Manual Z
-            <input id="manual-z" type="range" min="-1" max="1" step="0.01" value="0" />
-          </label>
+        <div class="manual-controls">
+          <p class="manual-title">Manual Nudge (also: W/A/S/D + Q/E)</p>
+          <div class="manual-grid">
+            <button type="button" class="nudge-btn" data-axis="y" data-delta="1">Up</button>
+            <button type="button" class="nudge-btn" data-axis="z" data-delta="-1">In</button>
+            <button type="button" class="nudge-btn" data-axis="x" data-delta="-1">Left</button>
+            <button type="button" class="nudge-btn" data-axis="y" data-delta="-1">Down</button>
+            <button type="button" class="nudge-btn" data-axis="x" data-delta="1">Right</button>
+            <button type="button" class="nudge-btn" data-axis="z" data-delta="1">Out</button>
+          </div>
+          <button id="manual-center-btn" type="button">Center Manual Offset</button>
+          <p id="manual-offset-text">Manual offset: X 0.00 | Y 0.00 | Z 0.00</p>
         </div>
 
         <p id="status-text" role="status">

@@ -8,11 +8,12 @@ const statusText = document.getElementById("status-text");
 const trackingBtn = document.getElementById("toggle-tracking-btn");
 const rotateBtn = document.getElementById("toggle-rotate-btn");
 const resetBtn = document.getElementById("reset-view-btn");
+const insideViewBtn = document.getElementById("inside-view-btn");
 const splatUploadInput = document.getElementById("splat-upload");
 const splatScaleInput = document.getElementById("splat-scale");
-const manualX = document.getElementById("manual-x");
-const manualY = document.getElementById("manual-y");
-const manualZ = document.getElementById("manual-z");
+const manualCenterBtn = document.getElementById("manual-center-btn");
+const manualOffsetText = document.getElementById("manual-offset-text");
+const nudgeButtons = document.querySelectorAll(".nudge-btn");
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b1123);
@@ -27,15 +28,15 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-const camera = new THREE.PerspectiveCamera(55, 1, 0.05, 200);
-camera.position.set(0, 1.55, 4.3);
-camera.lookAt(0, 1.2, 0);
+const camera = new THREE.PerspectiveCamera(88, 1, 0.03, 200);
+camera.position.set(0, 0, 0.15);
+camera.lookAt(0, 0, -1);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 0.05;
 controls.maxDistance = 300;
-controls.target.set(0, 1.2, 0);
+controls.target.set(0, 0, -1);
 controls.update();
 controls.saveState();
 
@@ -66,12 +67,14 @@ let orientationEnabled = false;
 let faceTrackingEnabled = false;
 
 const offAxisSettings = {
-  xFrustumGain: 0.11,
-  yFrustumGain: 0.09,
-  cameraXGain: 0.45,
-  cameraYGain: 0.3,
-  cameraZGain: 0.65,
+  xFrustumGain: 0.05,
+  yFrustumGain: 0.04,
+  cameraXGain: 0.22,
+  cameraYGain: 0.18,
+  cameraZGain: 0.28,
 };
+const manualNudgeStep = 0.08;
+const manualRange = 0.75;
 
 const root = new THREE.Group();
 scene.add(root);
@@ -126,18 +129,11 @@ function createCharacter() {
   const group = new THREE.Group();
 
   const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.3, 0.75, 8, 16),
+    new THREE.CylinderGeometry(0.3, 0.3, 1.05, 24),
     new THREE.MeshStandardMaterial({ color: 0x6ea8ff, roughness: 0.42, metalness: 0.25 }),
   );
-  body.position.y = 1.0;
+  body.position.y = 0.72;
   group.add(body);
-
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.24, 24, 18),
-    new THREE.MeshStandardMaterial({ color: 0xffd8b1, roughness: 0.55, metalness: 0.08 }),
-  );
-  head.position.set(0, 1.63, 0);
-  group.add(head);
 
   const stand = new THREE.Mesh(
     new THREE.CylinderGeometry(0.42, 0.5, 0.2, 24),
@@ -168,19 +164,22 @@ function setupUiEvents() {
     rotateBtn.textContent = `Rotate Mode: ${rotateMode ? "On" : "Off"}`;
   });
   resetBtn.addEventListener("click", resetView);
+  insideViewBtn.addEventListener("click", setInsideView);
 
-  const onManualInput = () => {
-    poseState.manual.x = Number(manualX.value);
-    poseState.manual.y = Number(manualY.value);
-    poseState.manual.z = Number(manualZ.value);
-    if (!faceTrackingEnabled && !orientationEnabled) poseState.source = "manual";
-  };
-
-  manualX.addEventListener("input", onManualInput);
-  manualY.addEventListener("input", onManualInput);
-  manualZ.addEventListener("input", onManualInput);
   splatUploadInput.addEventListener("change", onSplatUploadChange);
   splatScaleInput.addEventListener("input", onSplatScaleChange);
+  manualCenterBtn.addEventListener("click", centerManualPose);
+
+  nudgeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const axis = button.dataset.axis;
+      const delta = Number(button.dataset.delta || 0);
+      nudgeManualPose(axis, delta * manualNudgeStep);
+    });
+  });
+
+  window.addEventListener("keydown", onManualKeydown);
+  updateManualOffsetLabel();
 }
 
 function setupPointerEvents() {
@@ -308,21 +307,25 @@ function resetView() {
   poseState.manual = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   poseState.face = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   poseState.orientation = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
-  manualX.value = "0";
-  manualY.value = "0";
-  manualZ.value = "0";
-  controls.reset();
-  controls.update();
+  updateManualOffsetLabel();
+  setInsideView();
   activeSplatScale = 1;
   splatScaleInput.value = "1";
   if (activeSplatViewer) activeSplatViewer.scale.setScalar(activeSplatScale);
   setStatus("View reset.");
 }
 
+function setInsideView() {
+  camera.position.set(0, 0, 0.15);
+  controls.target.set(0, 0, -1);
+  controls.update();
+  controls.saveState();
+}
+
 function getActivePose() {
-  if (faceTrackingEnabled) return poseState.face;
-  if (orientationEnabled) return poseState.orientation;
-  return poseState.manual;
+  if (faceTrackingEnabled) return clampPose(poseState.face);
+  if (orientationEnabled) return clampPose(poseState.orientation);
+  return clampPose(poseState.manual);
 }
 
 function applyOffAxisProjection(pose) {
@@ -440,6 +443,65 @@ async function loadSplatFromUrl(url, label) {
 function isSplatFile(name) {
   const lower = name.toLowerCase();
   return lower.endsWith(".ply") || lower.endsWith(".splat") || lower.endsWith(".ksplat");
+}
+
+function onManualKeydown(event) {
+  if (event.repeat) return;
+  if (faceTrackingEnabled) return;
+  if (event.target instanceof HTMLInputElement) return;
+
+  switch (event.key.toLowerCase()) {
+    case "a":
+      nudgeManualPose("x", -manualNudgeStep);
+      break;
+    case "d":
+      nudgeManualPose("x", manualNudgeStep);
+      break;
+    case "w":
+      nudgeManualPose("y", manualNudgeStep);
+      break;
+    case "s":
+      nudgeManualPose("y", -manualNudgeStep);
+      break;
+    case "q":
+      nudgeManualPose("z", -manualNudgeStep);
+      break;
+    case "e":
+      nudgeManualPose("z", manualNudgeStep);
+      break;
+    default:
+      return;
+  }
+}
+
+function nudgeManualPose(axis, amount) {
+  if (!["x", "y", "z"].includes(axis)) return;
+  poseState.manual[axis] = THREE.MathUtils.clamp(poseState.manual[axis] + amount, -manualRange, manualRange);
+  if (!faceTrackingEnabled && !orientationEnabled) poseState.source = "manual";
+  updateManualOffsetLabel();
+}
+
+function centerManualPose() {
+  poseState.manual.x = 0;
+  poseState.manual.y = 0;
+  poseState.manual.z = 0;
+  updateManualOffsetLabel();
+  if (!faceTrackingEnabled && !orientationEnabled) poseState.source = "manual";
+}
+
+function updateManualOffsetLabel() {
+  manualOffsetText.textContent = `Manual offset: X ${poseState.manual.x.toFixed(2)} | Y ${poseState.manual.y.toFixed(2)} | Z ${poseState.manual.z.toFixed(2)}`;
+}
+
+function clampPose(pose) {
+  return {
+    x: THREE.MathUtils.clamp(pose.x, -0.8, 0.8),
+    y: THREE.MathUtils.clamp(pose.y, -0.8, 0.8),
+    z: THREE.MathUtils.clamp(pose.z, -0.8, 0.8),
+    yaw: THREE.MathUtils.clamp(pose.yaw ?? 0, -0.9, 0.9),
+    pitch: THREE.MathUtils.clamp(pose.pitch ?? 0, -0.9, 0.9),
+    roll: THREE.MathUtils.clamp(pose.roll ?? 0, -0.9, 0.9),
+  };
 }
 
 function animate() {
