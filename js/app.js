@@ -459,7 +459,7 @@ function onZoomChange() {
 }
 
 function onParallaxStrengthChange() {
-  parallaxStrength = THREE.MathUtils.clamp(Number(parallaxStrengthInput.value) || 1, 1, 5);
+  parallaxStrength = THREE.MathUtils.clamp(Number(parallaxStrengthInput.value) || 1, 0.05, 5);
   updateViewerCamera(getActivePose(), true);
   setStatus(`Parallax: ${parallaxStrength.toFixed(2)}x`);
 }
@@ -791,7 +791,7 @@ function getPreferredSplatTransform(name) {
       frontFaceAxis: "zMax",
       fitCameraToScene: true,
       lookDepthFactor: 1.0,
-      rotation: [180, 0, 0],
+      rotation: [0, 0, 0],
     };
   }
   return null;
