@@ -9,6 +9,7 @@ const resetBtn = document.getElementById("reset-view-btn");
 const recenterPortalBtn = document.getElementById("recenter-portal-btn");
 const splatUploadInput = document.getElementById("splat-upload");
 const splatScaleInput = document.getElementById("splat-scale");
+const lookButtons = document.querySelectorAll(".look-btn");
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b1123);
@@ -27,6 +28,12 @@ const camera = new THREE.PerspectiveCamera(70, 1, 0.03, 200);
 const portalBasePosition = new THREE.Vector3(0, 0, 0.15);
 const portalBaseTarget = new THREE.Vector3(0, 0, -1);
 const portalBaseQuaternion = new THREE.Quaternion();
+const portalForward = new THREE.Vector3(0, 0, -1);
+let portalYaw = 0;
+let portalPitch = 0;
+let dragLookActive = false;
+let lastDragX = 0;
+let lastDragY = 0;
 updatePortalBaseCamera();
 
 const clock = new THREE.Clock();
@@ -128,6 +135,21 @@ function setupUiEvents() {
 
   splatUploadInput.addEventListener("change", onSplatUploadChange);
   splatScaleInput.addEventListener("input", onSplatScaleChange);
+
+  lookButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const direction = button.dataset.look;
+      if (direction === "left") rotatePortalView(0.18, 0);
+      if (direction === "right") rotatePortalView(-0.18, 0);
+      if (direction === "up") rotatePortalView(0, 0.12);
+      if (direction === "down") rotatePortalView(0, -0.12);
+    });
+  });
+
+  canvas.addEventListener("pointerdown", onCanvasPointerDown);
+  canvas.addEventListener("pointermove", onCanvasPointerMove);
+  canvas.addEventListener("pointerup", onCanvasPointerUp);
+  canvas.addEventListener("pointercancel", onCanvasPointerUp);
 }
 
 async function toggleTracking() {
@@ -207,7 +229,6 @@ function onDeviceOrientation(event) {
 }
 
 function resetView() {
-  poseState.manual = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   poseState.face = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   poseState.orientation = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   recenterPortal();
@@ -217,6 +238,8 @@ function resetView() {
 }
 
 function recenterPortal() {
+  portalYaw = 0;
+  portalPitch = 0;
   updatePortalBaseCamera();
   setStatus("Portal recentered.");
 }
@@ -224,10 +247,43 @@ function recenterPortal() {
 function updatePortalBaseCamera() {
   const viewingDistanceM = (portalCalibration.viewingDistanceCm / portalZoom) * 0.01;
   portalBasePosition.set(0, 0, viewingDistanceM);
-  portalBaseTarget.set(0, 0, -1);
+  portalForward.set(0, 0, -1).applyEuler(new THREE.Euler(portalPitch, portalYaw, 0, "YXZ"));
+  portalBaseTarget.copy(portalBasePosition).add(portalForward);
   camera.position.copy(portalBasePosition);
   camera.lookAt(portalBaseTarget);
   portalBaseQuaternion.copy(camera.quaternion);
+}
+
+function rotatePortalView(deltaYaw, deltaPitch) {
+  portalYaw = THREE.MathUtils.clamp(portalYaw + deltaYaw, -1.5, 1.5);
+  portalPitch = THREE.MathUtils.clamp(portalPitch + deltaPitch, -1.0, 1.0);
+  updatePortalBaseCamera();
+  setStatus("Portal view rotated.");
+}
+
+function onCanvasPointerDown(event) {
+  if (event.target !== canvas) return;
+  dragLookActive = true;
+  lastDragX = event.clientX;
+  lastDragY = event.clientY;
+  canvas.setPointerCapture(event.pointerId);
+}
+
+function onCanvasPointerMove(event) {
+  if (!dragLookActive) return;
+  const dx = event.clientX - lastDragX;
+  const dy = event.clientY - lastDragY;
+  lastDragX = event.clientX;
+  lastDragY = event.clientY;
+  rotatePortalView(-dx * 0.005, -dy * 0.004);
+}
+
+function onCanvasPointerUp(event) {
+  if (!dragLookActive) return;
+  dragLookActive = false;
+  if (canvas.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId);
+  }
 }
 
 function getActivePose() {

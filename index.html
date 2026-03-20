@@ -22,6 +22,7 @@
           <li>Press <strong>Load Splat File</strong> and pick your SHARP/3DGS file.</li>
           <li>Adjust <strong>Zoom</strong> to frame the portal depth you want.</li>
           <li>Enable <strong>Face Tracking</strong> for portal parallax.</li>
+          <li>Use <strong>Look</strong> buttons or drag on the scene to rotate the portal camera.</li>
           <li>Use <strong>Recenter Portal</strong> anytime to restore the window pose.</li>
         </ol>
 
@@ -36,6 +37,16 @@
           <input id="splat-upload" type="file" accept=".ply,.compressed.ply,.splat,.ksplat,.spz" />
           <label for="splat-scale">Zoom</label>
           <input id="splat-scale" type="range" min="0.01" max="5" step="0.01" value="1" />
+        </div>
+
+        <div class="look-controls">
+          <p class="look-title">Look Around</p>
+          <div class="look-grid">
+            <button type="button" class="look-btn" data-look="up">Look Up</button>
+            <button type="button" class="look-btn" data-look="left">Look Left</button>
+            <button type="button" class="look-btn" data-look="right">Look Right</button>
+            <button type="button" class="look-btn" data-look="down">Look Down</button>
+          </div>
         </div>
 
         <p id="status-text" role="status">
