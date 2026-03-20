@@ -769,9 +769,14 @@ function getPreferredSplatTransform(name) {
   const lower = name.toLowerCase();
   if (lower.endsWith(".ply") || lower.endsWith(".compressed.ply")) {
     return {
-      position: [0, 0, 0],
-      rotation: [-90, 0, 180],
-      scale: [1, 1, 1],
+      autoCenter: true,
+      autoScaleToScreen: true,
+      scaleFill: 1.55,
+      alignFrontFaceToScreen: true,
+      frontFaceAxis: "zMax",
+      fitCameraToScene: true,
+      lookDepthFactor: 0.58,
+      rotation: [0, 0, 180],
     };
   }
   return null;
@@ -782,15 +787,52 @@ function applyPreferredSplatTransform(transform) {
   const viewer = getViewerInstance();
   const gsplat = viewer?.global?.app?.root?.children?.find((child) => child.name === "gsplat");
   if (!gsplat) return;
+  const aabb = gsplat.gsplat?.customAabb ?? null;
+  const size = aabb?.halfExtents
+    ? {
+        x: aabb.halfExtents.x * 2,
+        y: aabb.halfExtents.y * 2,
+        z: aabb.halfExtents.z * 2,
+      }
+    : null;
+  let scaleValue = 1;
 
-  if (transform.position) {
+  if (transform.autoScaleToScreen && size) {
+    const screenWidth = calibration.screenWidthCm * 0.01 * 0.94;
+    const screenHeight = calibration.screenHeightCm * 0.01 * 0.94;
+    const safeWidth = Math.max(size.x, 0.001);
+    const safeHeight = Math.max(size.y, 0.001);
+    scaleValue = Math.min(screenWidth / safeWidth, screenHeight / safeHeight) * (transform.scaleFill ?? 1);
+    gsplat.setLocalScale(scaleValue, scaleValue, scaleValue);
+  } else if (transform.scale) {
+    scaleValue = transform.scale[0];
+    gsplat.setLocalScale(transform.scale[0], transform.scale[1], transform.scale[2]);
+  }
+
+  if (transform.autoCenter && aabb?.center) {
+    const centerX = -aabb.center.x * scaleValue;
+    const centerY = -aabb.center.y * scaleValue;
+    let centerZ = -aabb.center.z * scaleValue;
+    if (transform.alignFrontFaceToScreen && transform.frontFaceAxis === "zMax") {
+      centerZ = -(aabb.center.z + aabb.halfExtents.z) * scaleValue;
+    }
+    gsplat.setLocalPosition(centerX, centerY, centerZ);
+  } else if (transform.position) {
     gsplat.setLocalPosition(transform.position[0], transform.position[1], transform.position[2]);
   }
   if (transform.rotation) {
     gsplat.setLocalEulerAngles(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
   }
-  if (transform.scale) {
-    gsplat.setLocalScale(transform.scale[0], transform.scale[1], transform.scale[2]);
+  if (transform.fitCameraToScene && size) {
+    const scaledDepth = size.z * scaleValue;
+    const fittedDistance = Math.max(getNeutralViewingDistance(), scaledDepth + 0.08);
+    const depthTarget = -scaledDepth * (transform.lookDepthFactor ?? 0.5);
+    const viewerCamera = viewer.global.camera;
+    viewerCamera.setPosition(0, 0, fittedDistance);
+    viewerCamera.lookAt(0, 0, depthTarget);
+    if (viewerCamera.camera) {
+      viewerCamera.camera.calculateProjection = null;
+    }
   }
   viewer.global.app.renderNextFrame = true;
 }
