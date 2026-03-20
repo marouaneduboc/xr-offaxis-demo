@@ -19,6 +19,7 @@ const resetBtn = document.getElementById("reset-view-btn");
 const recenterPortalBtn = document.getElementById("recenter-portal-btn");
 const pointCloudUploadInput = document.getElementById("splat-upload");
 const zoomInput = document.getElementById("splat-scale");
+const parallaxStrengthInput = document.getElementById("parallax-strength");
 const lookButtons = document.querySelectorAll(".look-btn");
 const screenWidthInput = document.getElementById("screen-width-input");
 const screenHeightInput = document.getElementById("screen-height-input");
@@ -75,6 +76,7 @@ const poseState = {
 let orientationEnabled = false;
 let faceTrackingEnabled = false;
 let portalZoom = 1;
+let parallaxStrength = Number(parallaxStrengthInput?.value ?? 1) || 1;
 let activePointCloud = null;
 let viewerModeActive = false;
 let viewerReady = false;
@@ -141,6 +143,7 @@ function setupUiEvents() {
   recenterPortalBtn.addEventListener("click", recenterPortal);
   pointCloudUploadInput.addEventListener("change", onPointCloudUploadChange);
   zoomInput.addEventListener("input", onZoomChange);
+  parallaxStrengthInput.addEventListener("input", onParallaxStrengthChange);
   saveCalibrationBtn.addEventListener("click", onSaveCalibration);
 
   lookButtons.forEach((button) => {
@@ -237,7 +240,9 @@ function resetView() {
   poseState.face = { x: 0.5, y: 0.5, z: 1, yaw: 0, pitch: 0, roll: 0 };
   poseState.orientation = { x: 0.5, y: 0.5, z: 1, yaw: 0, pitch: 0, roll: 0 };
   portalZoom = 1;
+  parallaxStrength = 1;
   zoomInput.value = "1";
+  parallaxStrengthInput.value = "1";
   recenterPortal();
   setStatus("View reset.");
 }
@@ -447,10 +452,19 @@ async function prepareUpload(file) {
 
 function onZoomChange() {
   portalZoom = Math.max(0.05, Number(zoomInput.value));
+  if (viewerModeActive && viewerReady && activeViewerTransform) {
+    applyPreferredSplatTransform(activeViewerTransform);
+  }
   updatePortalBaseCamera();
   if (viewerModeActive && viewerReady) syncViewerNeutralCamera();
   updateViewerCamera(getActivePose());
   setStatus(`Zoom: ${portalZoom.toFixed(2)}x`);
+}
+
+function onParallaxStrengthChange() {
+  parallaxStrength = THREE.MathUtils.clamp(Number(parallaxStrengthInput.value) || 0, 0, 2.5);
+  updateViewerCamera(getActivePose(), true);
+  setStatus(`Parallax: ${parallaxStrength.toFixed(2)}x`);
 }
 
 async function loadPointCloudFromUrl(url, label) {
@@ -775,11 +789,11 @@ function getPreferredSplatTransform(name) {
     return {
       autoCenter: true,
       autoScaleToScreen: true,
-      scaleFill: 2.8,
+      scaleFill: 1.7,
       alignFrontFaceToScreen: true,
       frontFaceAxis: "zMax",
       fitCameraToScene: true,
-      lookDepthFactor: 0.72,
+      lookDepthFactor: 1.0,
       rotation: [0, 0, 0],
     };
   }
@@ -829,9 +843,11 @@ function applyPreferredSplatTransform(transform) {
     gsplat.setLocalEulerAngles(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
   }
   if (transform.fitCameraToScene && size) {
+    const screen = getEffectiveScreenSizeMeters();
     const scaledDepth = size.z * scaleValue;
-    viewerFitDistance = getNeutralViewingDistance();
-    viewerDepthTarget = -scaledDepth * (transform.lookDepthFactor ?? 0.5);
+    const desiredDepth = Math.max(screen.height, scaledDepth * (transform.lookDepthFactor ?? 1.0));
+    viewerFitDistance = Math.max(0.24, desiredDepth * 1.05);
+    viewerDepthTarget = -desiredDepth;
     syncViewerNeutralCamera();
   }
   viewer.global.app.renderNextFrame = true;
@@ -884,7 +900,7 @@ function headPoseToWorldPosition(pose) {
   const screen = getEffectiveScreenSizeMeters();
   const screenWidthWorld = screen.width;
   const screenHeightWorld = screen.height;
-  const movementScale = 1.5;
+  const movementScale = 1.5 * parallaxStrength;
   const baseDistance = getNeutralViewingDistance();
 
   return {
