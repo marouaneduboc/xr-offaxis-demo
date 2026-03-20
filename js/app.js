@@ -50,6 +50,7 @@ const poseState = {
 
 let orientationEnabled = false;
 let faceTrackingEnabled = false;
+let portalZoom = 1;
 
 const portalCalibration = {
   screenWidthCm: 60,
@@ -64,7 +65,6 @@ const root = new THREE.Group();
 scene.add(root);
 let activeSplatViewer = null;
 let activeSplatBlobUrl = null;
-let activeSplatScale = 1;
 
 const hemiLight = new THREE.HemisphereLight(0xb4ccff, 0x334466, 0.95);
 scene.add(hemiLight);
@@ -219,9 +219,8 @@ function resetView() {
   poseState.face = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   poseState.orientation = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   recenterPortal();
-  activeSplatScale = 1;
+  portalZoom = 1;
   splatScaleInput.value = "1";
-  if (activeSplatViewer) activeSplatViewer.scale.setScalar(activeSplatScale);
   setStatus("View reset.");
 }
 
@@ -231,7 +230,7 @@ function recenterPortal() {
 }
 
 function updatePortalBaseCamera() {
-  const viewingDistanceM = portalCalibration.viewingDistanceCm * 0.01;
+  const viewingDistanceM = (portalCalibration.viewingDistanceCm / portalZoom) * 0.01;
   portalBasePosition.set(0, 0, viewingDistanceM);
   portalBaseTarget.set(0, 0, -1);
   camera.position.copy(portalBasePosition);
@@ -250,7 +249,7 @@ function applyOffAxisProjection(pose) {
   const far = camera.far;
   const screenWidthM = portalCalibration.screenWidthCm * 0.01;
   const screenHeightM = portalCalibration.screenHeightCm * 0.01;
-  const baseDistanceM = portalCalibration.viewingDistanceCm * 0.01;
+  const baseDistanceM = (portalCalibration.viewingDistanceCm / portalZoom) * 0.01;
   const eyeX = pose.x * screenWidthM * portalCalibration.lateralTravelRatio;
   const eyeY = pose.y * screenHeightM * portalCalibration.verticalTravelRatio;
   const eyeZ = THREE.MathUtils.clamp(
@@ -331,11 +330,8 @@ async function onSplatUploadChange(event) {
 }
 
 function onSplatScaleChange() {
-  activeSplatScale = Number(splatScaleInput.value);
-  if (activeSplatViewer) {
-    activeSplatViewer.scale.setScalar(activeSplatScale);
-    setStatus(`Splat scale: ${activeSplatScale.toFixed(2)}`);
-  }
+  portalZoom = Math.max(0.05, Number(splatScaleInput.value));
+  setStatus(`Zoom: ${portalZoom.toFixed(2)}x`);
 }
 
 async function loadSplatFromUrl(url, label, sceneFormat) {
@@ -345,29 +341,23 @@ async function loadSplatFromUrl(url, label, sceneFormat) {
   for (const attempt of loadAttempts) {
     try {
       if (activeSplatViewer) {
-        root.remove(activeSplatViewer);
+        if (typeof activeSplatViewer.stop === "function") activeSplatViewer.stop();
         if (typeof activeSplatViewer.dispose === "function") activeSplatViewer.dispose();
         activeSplatViewer = null;
       }
 
       activeSplatViewer = createSplatViewer();
-      activeSplatViewer.position.set(0, 0, 0);
-      // SuperSplat default orientation for most formats.
-      activeSplatViewer.rotation.set(0, 0, Math.PI);
-      activeSplatViewer.scale.setScalar(activeSplatScale);
-      root.add(activeSplatViewer);
 
-      await activeSplatViewer.addSplatScenes([
-        {
-          path: url,
-          format: attempt.format,
-          progressiveLoad: attempt.progressiveLoad,
-          splatAlphaRemovalThreshold: attempt.alphaThreshold,
-          position: [0, 0, 0],
-          rotation: [0, 0, 0, 1],
-          scale: [1, 1, 1],
-        },
-      ]);
+      await activeSplatViewer.addSplatScene(url, {
+        format: attempt.format,
+        progressiveLoad: attempt.progressiveLoad,
+        splatAlphaRemovalThreshold: attempt.alphaThreshold,
+        // SuperSplat-like orientation baseline.
+        position: [0, 0, 0],
+        rotation: [0, 0, 1, 0],
+        scale: [1, 1, 1],
+        showLoadingUI: false,
+      });
 
       setStatus(`Loaded splat: ${label} (${attempt.label})`);
       return true;
@@ -377,7 +367,7 @@ async function loadSplatFromUrl(url, label, sceneFormat) {
   }
 
   if (activeSplatViewer) {
-    root.remove(activeSplatViewer);
+    if (typeof activeSplatViewer.stop === "function") activeSplatViewer.stop();
     if (typeof activeSplatViewer.dispose === "function") activeSplatViewer.dispose();
     activeSplatViewer = null;
   }
@@ -443,7 +433,12 @@ async function normalizeWithSplatTransform(file) {
 }
 
 function createSplatViewer() {
-  return new GaussianSplats3D.DropInViewer({
+  return new GaussianSplats3D.Viewer({
+    selfDrivenMode: false,
+    renderer,
+    camera,
+    threeScene: scene,
+    useBuiltInControls: false,
     gpuAcceleratedSort: false,
     sharedMemoryForWorkers: false,
     sphericalHarmonicsDegree: 0,
@@ -491,7 +486,12 @@ function animate() {
   requestAnimationFrame(animate);
   const pose = getActivePose();
   applyOffAxisProjection(pose);
-  renderer.render(scene, camera);
+  if (activeSplatViewer) {
+    activeSplatViewer.update();
+    activeSplatViewer.render();
+  } else {
+    renderer.render(scene, camera);
+  }
 }
 
 function onResize() {
