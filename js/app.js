@@ -452,9 +452,6 @@ async function prepareUpload(file) {
 
 function onZoomChange() {
   portalZoom = Math.max(0.05, Number(zoomInput.value));
-  if (viewerModeActive && viewerReady && activeViewerTransform) {
-    applyPreferredSplatTransform(activeViewerTransform);
-  }
   updatePortalBaseCamera();
   if (viewerModeActive && viewerReady) syncViewerNeutralCamera();
   updateViewerCamera(getActivePose());
@@ -462,7 +459,7 @@ function onZoomChange() {
 }
 
 function onParallaxStrengthChange() {
-  parallaxStrength = THREE.MathUtils.clamp(Number(parallaxStrengthInput.value) || 0, 0, 2.5);
+  parallaxStrength = THREE.MathUtils.clamp(Number(parallaxStrengthInput.value) || 1, 1, 5);
   updateViewerCamera(getActivePose(), true);
   setStatus(`Parallax: ${parallaxStrength.toFixed(2)}x`);
 }
@@ -1013,7 +1010,7 @@ function syncViewerNeutralCamera() {
   const viewer = getViewerInstance();
   if (!viewer) return;
 
-  const neutralDistance = THREE.MathUtils.clamp(viewerFitDistance / Math.max(0.05, portalZoom), 0.14, 2.5);
+  const neutralDistance = THREE.MathUtils.clamp(viewerFitDistance / Math.max(0.05, portalZoom), 0.03, 2.5);
   const viewerCamera = viewer.global.camera;
   viewerCamera.setPosition(portalPanX, portalPanY, neutralDistance);
   viewerCamera.lookAt(portalPanX, portalPanY, viewerDepthTarget);
