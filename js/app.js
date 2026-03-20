@@ -1,13 +1,5 @@
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 import * as GaussianSplats3D from "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/+esm";
-import {
-  getInputFormat,
-  getOutputFormat,
-  MemoryFileSystem,
-  MemoryReadFileSystem,
-  readFile,
-  writeFile,
-} from "https://cdn.jsdelivr.net/npm/@playcanvas/splat-transform@1.9.2/dist/index.mjs";
 import { FaceTracker } from "./face-tracker.js";
 
 const canvas = document.getElementById("scene-canvas");
@@ -393,6 +385,15 @@ function getSplatSceneFormat(name) {
 }
 
 async function normalizeWithSplatTransform(file) {
+  const {
+    getInputFormat,
+    getOutputFormat,
+    MemoryFileSystem,
+    MemoryReadFileSystem,
+    readFile,
+    writeFile,
+  } = await import("https://cdn.jsdelivr.net/npm/@playcanvas/splat-transform@1.9.2/dist/index.mjs");
+
   const inputName = file.name;
   const readFs = new MemoryReadFileSystem();
   const bytes = new Uint8Array(await file.arrayBuffer());
