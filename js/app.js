@@ -1,4 +1,5 @@
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+import * as GaussianSplats3D from "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/+esm";
 import { PLYLoader } from "https://unpkg.com/three@0.160.0/examples/jsm/loaders/PLYLoader.js?module";
 import { FaceTracker } from "./face-tracker.js";
 
@@ -48,7 +49,8 @@ let orientationEnabled = false;
 let faceTrackingEnabled = false;
 let portalZoom = 1;
 let activePointCloud = null;
-let activePointCloudUrl = null;
+let activeContentUrl = null;
+let activeSplatViewer = null;
 
 const portalCalibration = {
   screenWidthCm: 60,
@@ -343,14 +345,40 @@ function makeFrustum(left, right, bottom, top, near, far) {
 async function onPointCloudUploadChange(event) {
   const file = event.target.files?.[0];
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith(".ply")) {
-    setStatus("Point cloud mode currently supports .ply only.");
+  const sceneFormat = getSplatSceneFormat(file.name);
+  if (!sceneFormat && !file.name.toLowerCase().endsWith(".ply")) {
+    setStatus("Supported uploads: .ply, .compressed.ply, .splat, .ksplat, .spz");
     return;
   }
 
-  if (activePointCloudUrl) URL.revokeObjectURL(activePointCloudUrl);
-  activePointCloudUrl = URL.createObjectURL(file);
-  await loadPointCloudFromUrl(activePointCloudUrl, file.name);
+  if (activeContentUrl) URL.revokeObjectURL(activeContentUrl);
+  activeContentUrl = URL.createObjectURL(file);
+
+  if (sceneFormat) {
+    const directLoaded = await loadGaussianSplatFromUrl(activeContentUrl, file.name, sceneFormat);
+    if (directLoaded) return;
+
+    try {
+      const normalized = await normalizeToPly(file);
+      URL.revokeObjectURL(activeContentUrl);
+      activeContentUrl = URL.createObjectURL(normalized.blob);
+      const normalizedLoaded = await loadGaussianSplatFromUrl(
+        activeContentUrl,
+        `${file.name} (normalized)`,
+        GaussianSplats3D.SceneFormat.Ply,
+      );
+      if (normalizedLoaded) return;
+    } catch (error) {
+      setStatus(`Splat normalization failed: ${error.message}`);
+    }
+  }
+
+  if (file.name.toLowerCase().endsWith(".ply") || file.name.toLowerCase().endsWith(".compressed.ply")) {
+    await loadPointCloudFromUrl(activeContentUrl, `${file.name} (point cloud fallback)`);
+    return;
+  }
+
+  setStatus("Splat load failed.");
 }
 
 function onZoomChange() {
@@ -362,6 +390,7 @@ async function loadPointCloudFromUrl(url, label) {
   const loader = new PLYLoader();
 
   try {
+    clearActiveSplatViewer();
     const geometry = await loader.loadAsync(url);
     geometry.computeBoundingSphere();
 
@@ -392,11 +421,126 @@ async function loadPointCloudFromUrl(url, label) {
   }
 }
 
+async function loadGaussianSplatFromUrl(url, label, sceneFormat) {
+  try {
+    clearActivePointCloud();
+    clearActiveSplatViewer();
+    activeSplatViewer = createSplatViewer();
+
+    await activeSplatViewer.addSplatScene(url, {
+      format: sceneFormat,
+      progressiveLoad: false,
+      splatAlphaRemovalThreshold: 0,
+      position: [0, 0.72, -3.1],
+      rotation: [0, 0, 1, 0],
+      scale: [1, 1, 1],
+      showLoadingUI: false,
+    });
+
+    setStatus(`Loaded Gaussian splat: ${label}`);
+    return true;
+  } catch (error) {
+    clearActiveSplatViewer();
+    setStatus(`Gaussian splat load failed: ${error.message}`);
+    return false;
+  }
+}
+
+function createSplatViewer() {
+  return new GaussianSplats3D.Viewer({
+    selfDrivenMode: false,
+    renderer,
+    camera,
+    threeScene: scene,
+    useBuiltInControls: false,
+    gpuAcceleratedSort: false,
+    sharedMemoryForWorkers: false,
+    sphericalHarmonicsDegree: 0,
+    sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
+    integerBasedSort: false,
+  });
+}
+
+function clearActivePointCloud() {
+  if (!activePointCloud) return;
+  root.remove(activePointCloud);
+  activePointCloud.geometry.dispose();
+  activePointCloud.material.dispose();
+  activePointCloud = null;
+}
+
+function clearActiveSplatViewer() {
+  if (!activeSplatViewer) return;
+  if (typeof activeSplatViewer.stop === "function") activeSplatViewer.stop();
+  if (typeof activeSplatViewer.dispose === "function") activeSplatViewer.dispose();
+  activeSplatViewer = null;
+}
+
+function getSplatSceneFormat(name) {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".compressed.ply")) return GaussianSplats3D.SceneFormat.Ply;
+  if (lower.endsWith(".ply")) return GaussianSplats3D.SceneFormat.Ply;
+  if (lower.endsWith(".splat")) return GaussianSplats3D.SceneFormat.Splat;
+  if (lower.endsWith(".ksplat")) return GaussianSplats3D.SceneFormat.KSplat;
+  if (lower.endsWith(".spz")) return GaussianSplats3D.SceneFormat.Ply;
+  return null;
+}
+
+async function normalizeToPly(file) {
+  const {
+    getInputFormat,
+    getOutputFormat,
+    MemoryFileSystem,
+    MemoryReadFileSystem,
+    readFile,
+    writeFile,
+  } = await import("https://cdn.jsdelivr.net/npm/@playcanvas/splat-transform@1.9.2/dist/index.mjs");
+
+  const inputName = file.name;
+  const readFs = new MemoryReadFileSystem();
+  readFs.set(inputName, new Uint8Array(await file.arrayBuffer()));
+
+  const tables = await readFile({
+    filename: inputName,
+    inputFormat: getInputFormat(inputName),
+    options: {
+      iterations: 10,
+      lodSelect: [0],
+      unbundled: false,
+      lodChunkCount: 512,
+      lodChunkExtent: 16,
+    },
+    params: [],
+    fileSystem: readFs,
+  });
+  if (!tables?.length) throw new Error("No splat table parsed.");
+
+  const outputName = "normalized.ply";
+  const outFs = new MemoryFileSystem();
+  await writeFile(
+    {
+      filename: outputName,
+      outputFormat: getOutputFormat(outputName, {}),
+      dataTable: tables[0],
+      options: {},
+    },
+    outFs,
+  );
+  const normalizedBytes = outFs.results.get(outputName);
+  if (!normalizedBytes) throw new Error("PLY normalization failed.");
+  return { blob: new Blob([normalizedBytes], { type: "application/ply" }) };
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const pose = getActivePose();
   applyOffAxisProjection(pose);
-  renderer.render(scene, camera);
+  if (activeSplatViewer) {
+    activeSplatViewer.update();
+    activeSplatViewer.render();
+  } else {
+    renderer.render(scene, camera);
+  }
 }
 
 function onResize() {
