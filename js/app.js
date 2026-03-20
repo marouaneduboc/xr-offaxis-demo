@@ -1,9 +1,16 @@
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
-import * as GaussianSplats3D from "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/+esm";
 import { PLYLoader } from "https://unpkg.com/three@0.160.0/examples/jsm/loaders/PLYLoader.js?module";
+import {
+  html as supersplatHtml,
+  css as supersplatCss,
+  js as supersplatJs,
+} from "https://cdn.jsdelivr.net/npm/@playcanvas/supersplat-viewer@1.16.13/dist/index.js";
 import { FaceTracker } from "./face-tracker.js";
 
+const canvasWrap = document.getElementById("canvas-wrap");
 const canvas = document.getElementById("scene-canvas");
+const viewerFrame = document.getElementById("splat-viewer-frame");
+const viewerDragSurface = document.getElementById("viewer-drag-surface");
 const statusText = document.getElementById("status-text");
 const trackingBtn = document.getElementById("toggle-tracking-btn");
 const resetBtn = document.getElementById("reset-view-btn");
@@ -11,6 +18,12 @@ const recenterPortalBtn = document.getElementById("recenter-portal-btn");
 const pointCloudUploadInput = document.getElementById("splat-upload");
 const zoomInput = document.getElementById("splat-scale");
 const lookButtons = document.querySelectorAll(".look-btn");
+const screenWidthInput = document.getElementById("screen-width-input");
+const screenHeightInput = document.getElementById("screen-height-input");
+const viewDistanceInput = document.getElementById("view-distance-input");
+const saveCalibrationBtn = document.getElementById("save-calibration-btn");
+const pageParams = new URLSearchParams(window.location.search);
+const CALIBRATION_STORAGE_KEY = "xr-off-axis-calibration-v2";
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b1123);
@@ -25,11 +38,11 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const camera = new THREE.PerspectiveCamera(70, 1, 0.03, 200);
-const portalBasePosition = new THREE.Vector3(0, 0.78, 0.9);
-const portalBaseTarget = new THREE.Vector3(0, 0.62, -1);
+const portalBasePosition = new THREE.Vector3(0, 0, 0.9);
+const portalBaseTarget = new THREE.Vector3(0, 0, -1);
 const portalBaseQuaternion = new THREE.Quaternion();
 const portalForward = new THREE.Vector3(0, 0, -1);
-const defaultPortalPitch = -0.12;
+const defaultPortalPitch = -0.04;
 let portalYaw = 0;
 let portalPitch = defaultPortalPitch;
 let dragLookActive = false;
@@ -39,27 +52,42 @@ let lastDragY = 0;
 const poseOffset = new THREE.Vector3();
 const poseEuler = new THREE.Euler();
 const poseQuaternion = new THREE.Quaternion();
+const viewerForward = new THREE.Vector3();
+const viewerPosition = new THREE.Vector3();
+const viewerTarget = new THREE.Vector3();
+const viewerBasePosition = new THREE.Vector3(0, 0, 0.9);
+const viewerBaseQuaternion = new THREE.Quaternion();
+const viewerDeltaQuaternion = new THREE.Quaternion();
+const viewerPoseQuaternion = new THREE.Quaternion();
+const viewerRight = new THREE.Vector3();
+const viewerUp = new THREE.Vector3();
+const fallbackFocusPoint = new THREE.Vector3(0, 0.78, -5.4);
 
 const poseState = {
-  face: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 },
-  orientation: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 },
+  face: { x: 0.5, y: 0.5, z: 1, yaw: 0, pitch: 0, roll: 0 },
+  orientation: { x: 0.5, y: 0.5, z: 1, yaw: 0, pitch: 0, roll: 0 },
 };
 
 let orientationEnabled = false;
 let faceTrackingEnabled = false;
 let portalZoom = 1;
 let activePointCloud = null;
-let activeContentUrl = null;
-let activeSplatViewer = null;
+let viewerModeActive = false;
+let viewerReady = false;
+let viewerMessageHandlerToken = 0;
+let viewerResolveLoad = null;
+let viewerRejectLoad = null;
+let viewerAssetUrls = [];
 
-const portalCalibration = {
-  screenWidthCm: 60,
-  screenHeightCm: 34,
-  viewingDistanceCm: 90,
-  lateralTravelRatio: 0.32,
-  verticalTravelRatio: 0.24,
-  depthTravelRatio: 0.12,
+const calibrationDefaults = {
+  screenWidthCm: 34,
+  screenHeightCm: 19,
+  viewingDistanceCm: 60,
+  pixelWidth: window.innerWidth,
+  pixelHeight: window.innerHeight,
 };
+const calibration = loadCalibration();
+syncCalibrationInputs();
 
 const root = new THREE.Group();
 scene.add(root);
@@ -85,14 +113,14 @@ grid.material.transparent = true;
 scene.add(grid);
 
 const character = createCharacter();
-character.position.set(0, -0.18, -2.8);
+character.position.set(0, -0.18, -5.4);
 scene.add(character);
 
 const debugMarker = new THREE.Mesh(
   new THREE.BoxGeometry(0.18, 0.18, 0.18),
   new THREE.MeshStandardMaterial({ color: 0xff7b5c, emissive: 0x662211, emissiveIntensity: 0.5 }),
 );
-debugMarker.position.set(0, 0.72, -3.1);
+debugMarker.position.set(0, 0.72, -5.45);
 scene.add(debugMarker);
 
 const faceTracker = new FaceTracker({
@@ -105,8 +133,10 @@ const faceTracker = new FaceTracker({
 updatePortalBaseCamera();
 setupUiEvents();
 setupOrientationFallback();
+window.addEventListener("message", onViewerMessage);
 onResize();
 animate();
+bootstrapRemoteScene();
 
 function createCharacter() {
   const group = new THREE.Group();
@@ -132,6 +162,7 @@ function setupUiEvents() {
   recenterPortalBtn.addEventListener("click", recenterPortal);
   pointCloudUploadInput.addEventListener("change", onPointCloudUploadChange);
   zoomInput.addEventListener("input", onZoomChange);
+  saveCalibrationBtn.addEventListener("click", onSaveCalibration);
 
   lookButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -147,6 +178,10 @@ function setupUiEvents() {
   canvas.addEventListener("pointermove", onCanvasPointerMove);
   canvas.addEventListener("pointerup", onCanvasPointerUp);
   canvas.addEventListener("pointercancel", onCanvasPointerUp);
+  viewerDragSurface.addEventListener("pointerdown", onCanvasPointerDown);
+  viewerDragSurface.addEventListener("pointermove", onCanvasPointerMove);
+  viewerDragSurface.addEventListener("pointerup", onCanvasPointerUp);
+  viewerDragSurface.addEventListener("pointercancel", onCanvasPointerUp);
 }
 
 async function toggleTracking() {
@@ -211,17 +246,17 @@ function onDeviceOrientation(event) {
   const gamma = THREE.MathUtils.clamp(event.gamma ?? 0, -45, 45);
   const beta = THREE.MathUtils.clamp(event.beta ?? 0, -60, 60);
   const alpha = THREE.MathUtils.degToRad(event.alpha ?? 0);
-  poseState.orientation.x = THREE.MathUtils.clamp(gamma / 45, -1, 1);
-  poseState.orientation.y = THREE.MathUtils.clamp(beta / 60, -1, 1);
-  poseState.orientation.z = 0;
+  poseState.orientation.x = THREE.MathUtils.clamp(0.5 - gamma / 90, 0.2, 0.8);
+  poseState.orientation.y = THREE.MathUtils.clamp(0.5 - beta / 120, 0.2, 0.8);
+  poseState.orientation.z = 1;
   poseState.orientation.yaw = THREE.MathUtils.clamp(gamma / 60, -1, 1);
   poseState.orientation.pitch = THREE.MathUtils.clamp(beta / 70, -1, 1);
   poseState.orientation.roll = Math.sin(alpha) * 0.25;
 }
 
 function resetView() {
-  poseState.face = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
-  poseState.orientation = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
+  poseState.face = { x: 0.5, y: 0.5, z: 1, yaw: 0, pitch: 0, roll: 0 };
+  poseState.orientation = { x: 0.5, y: 0.5, z: 1, yaw: 0, pitch: 0, roll: 0 };
   portalZoom = 1;
   zoomInput.value = "1";
   recenterPortal();
@@ -232,11 +267,12 @@ function recenterPortal() {
   portalYaw = 0;
   portalPitch = defaultPortalPitch;
   updatePortalBaseCamera();
+  updateViewerCamera(getActivePose());
   setStatus("Portal recentered.");
 }
 
 function updatePortalBaseCamera() {
-  const viewingDistanceM = (portalCalibration.viewingDistanceCm / portalZoom) * 0.01;
+  const viewingDistanceM = getNeutralViewingDistance();
   portalBasePosition.set(0, 0, viewingDistanceM);
   portalForward.set(0, 0, -1).applyEuler(new THREE.Euler(portalPitch, portalYaw, 0, "YXZ"));
   portalBaseTarget.copy(portalBasePosition).add(portalForward);
@@ -249,15 +285,16 @@ function rotatePortalView(deltaYaw, deltaPitch) {
   portalYaw = THREE.MathUtils.clamp(portalYaw + deltaYaw, -1.5, 1.5);
   portalPitch = THREE.MathUtils.clamp(portalPitch + deltaPitch, -1.0, 1.0);
   updatePortalBaseCamera();
+  updateViewerCamera(getActivePose());
   setStatus("Portal view rotated.");
 }
 
 function onCanvasPointerDown(event) {
-  if (event.target !== canvas) return;
+  if (event.target !== canvas && event.target !== viewerDragSurface) return;
   dragLookActive = true;
   lastDragX = event.clientX;
   lastDragY = event.clientY;
-  canvas.setPointerCapture(event.pointerId);
+  event.target.setPointerCapture?.(event.pointerId);
 }
 
 function onCanvasPointerMove(event) {
@@ -272,22 +309,20 @@ function onCanvasPointerMove(event) {
 function onCanvasPointerUp(event) {
   if (!dragLookActive) return;
   dragLookActive = false;
-  if (canvas.hasPointerCapture(event.pointerId)) {
-    canvas.releasePointerCapture(event.pointerId);
-  }
+  event.target.releasePointerCapture?.(event.pointerId);
 }
 
 function getActivePose() {
   if (faceTrackingEnabled) return clampPose(poseState.face);
   if (orientationEnabled) return clampPose(poseState.orientation);
-  return clampPose({ x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 });
+  return clampPose({ x: 0.5, y: 0.5, z: 1, yaw: 0, pitch: 0, roll: 0 });
 }
 
 function clampPose(pose) {
   return {
-    x: THREE.MathUtils.clamp(pose.x, -0.65, 0.65),
-    y: THREE.MathUtils.clamp(pose.y, -0.65, 0.65),
-    z: THREE.MathUtils.clamp(pose.z, -0.65, 0.65),
+    x: THREE.MathUtils.clamp(pose.x, 0.2, 0.8),
+    y: THREE.MathUtils.clamp(pose.y, 0.2, 0.8),
+    z: THREE.MathUtils.clamp(pose.z, 0.5, 2.0),
     yaw: THREE.MathUtils.clamp(pose.yaw ?? 0, -0.9, 0.9),
     pitch: THREE.MathUtils.clamp(pose.pitch ?? 0, -0.9, 0.9),
     roll: THREE.MathUtils.clamp(pose.roll ?? 0, -0.9, 0.9),
@@ -297,32 +332,34 @@ function clampPose(pose) {
 function applyOffAxisProjection(pose) {
   const near = camera.near;
   const far = camera.far;
-  const screenWidthM = portalCalibration.screenWidthCm * 0.01;
-  const screenHeightM = portalCalibration.screenHeightCm * 0.01;
-  const baseDistanceM = (portalCalibration.viewingDistanceCm / portalZoom) * 0.01;
-  const eyeX = pose.x * screenWidthM * portalCalibration.lateralTravelRatio;
-  const eyeY = pose.y * screenHeightM * portalCalibration.verticalTravelRatio;
-  const eyeZ = THREE.MathUtils.clamp(
-    baseDistanceM + pose.z * baseDistanceM * portalCalibration.depthTravelRatio,
-    0.14,
-    2.5,
-  );
-
-  const halfW = screenWidthM * 0.5;
-  const halfH = screenHeightM * 0.5;
-  const left = near * ((-halfW - eyeX) / eyeZ);
-  const right = near * ((halfW - eyeX) / eyeZ);
-  const bottom = near * ((-halfH - eyeY) / eyeZ);
-  const top = near * ((halfH - eyeY) / eyeZ);
+  const headWorld = headPoseToWorldPosition(pose);
+  const screenWidthM = calibration.screenWidthCm * 0.01;
+  const screenHeightM = calibration.screenHeightCm * 0.01;
+  const screenLeft = -screenWidthM * 0.5;
+  const screenRight = screenWidthM * 0.5;
+  const screenBottom = -screenHeightM * 0.5;
+  const screenTop = screenHeightM * 0.5;
+  const eyeX = headWorld.x;
+  const eyeY = headWorld.y;
+  const eyeZ = headWorld.z;
+  const viewerToScreenDistance = eyeZ;
+  if (viewerToScreenDistance <= 0) return;
+  const nOverD = near / viewerToScreenDistance;
+  const left = (screenLeft - eyeX) * nOverD;
+  const right = (screenRight - eyeX) * nOverD;
+  const bottom = (screenBottom - eyeY) * nOverD;
+  const top = (screenTop - eyeY) * nOverD;
 
   const frustum = makeFrustum(left, right, bottom, top, near, far);
   camera.projectionMatrix.copy(frustum);
   camera.projectionMatrixInverse.copy(frustum).invert();
 
-  poseOffset.set(eyeX, eyeY, eyeZ - baseDistanceM);
-  camera.position.copy(portalBasePosition).add(poseOffset);
-  poseEuler.set(pose.pitch * 0.08, -pose.yaw * 0.1, pose.roll * 0.08);
+  camera.position.set(eyeX, eyeY, eyeZ);
+  poseOffset.set(0, 0, 0);
+  poseEuler.set(portalPitch + pose.pitch * 0.08, portalYaw - pose.yaw * 0.1, pose.roll * 0.08, "YXZ");
   poseQuaternion.setFromEuler(poseEuler);
+  camera.lookAt(fallbackFocusPoint);
+  portalBaseQuaternion.copy(camera.quaternion);
   camera.quaternion.copy(portalBaseQuaternion).multiply(poseQuaternion);
 }
 
@@ -345,44 +382,76 @@ function makeFrustum(left, right, bottom, top, near, far) {
 async function onPointCloudUploadChange(event) {
   const file = event.target.files?.[0];
   if (!file) return;
-  const sceneFormat = getSplatSceneFormat(file.name);
-  if (!sceneFormat && !file.name.toLowerCase().endsWith(".ply")) {
-    setStatus("Supported uploads: .ply, .compressed.ply, .splat, .ksplat, .spz");
+
+  const prepared = await prepareUpload(file);
+  if (!prepared) {
+    setStatus("Supported uploads: .ply, .compressed.ply, .sog, .splat, .ksplat, .spz");
     return;
   }
 
-  if (activeContentUrl) URL.revokeObjectURL(activeContentUrl);
-  activeContentUrl = URL.createObjectURL(file);
+  const splatLoaded = await loadGaussianSplatWithViewer(
+    prepared.blob,
+    prepared.label,
+    prepared.contentName,
+    prepared.preferredTransform,
+  );
+  if (splatLoaded) return;
 
-  if (sceneFormat) {
-    const directLoaded = await loadGaussianSplatFromUrl(activeContentUrl, file.name, sceneFormat);
-    if (directLoaded) return;
+  if (prepared.fallbackLabel) {
+    const fallbackUrl = URL.createObjectURL(prepared.blob);
+    try {
+      await loadPointCloudFromUrl(fallbackUrl, prepared.fallbackLabel);
+    } finally {
+      URL.revokeObjectURL(fallbackUrl);
+    }
+  }
+}
 
+async function prepareUpload(file) {
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".ply") || lower.endsWith(".compressed.ply")) {
+    return {
+      blob: file,
+      label: file.name,
+      contentName: file.name,
+      preferredTransform: getPreferredSplatTransform(file.name),
+      fallbackLabel: `${file.name} (point cloud fallback)`,
+    };
+  }
+
+  if (lower.endsWith(".sog")) {
+    return {
+      blob: file,
+      label: file.name,
+      contentName: file.name,
+      preferredTransform: getPreferredSplatTransform(file.name),
+      fallbackLabel: null,
+    };
+  }
+
+  if (lower.endsWith(".splat") || lower.endsWith(".ksplat") || lower.endsWith(".spz")) {
     try {
       const normalized = await normalizeToPly(file);
-      URL.revokeObjectURL(activeContentUrl);
-      activeContentUrl = URL.createObjectURL(normalized.blob);
-      const normalizedLoaded = await loadGaussianSplatFromUrl(
-        activeContentUrl,
-        `${file.name} (normalized)`,
-        GaussianSplats3D.SceneFormat.Ply,
-      );
-      if (normalizedLoaded) return;
+      return {
+        blob: normalized.blob,
+        label: `${file.name} (normalized to PLY)`,
+        contentName: "normalized.ply",
+        preferredTransform: getPreferredSplatTransform(file.name),
+        fallbackLabel: `${file.name} (normalized point cloud fallback)`,
+      };
     } catch (error) {
       setStatus(`Splat normalization failed: ${error.message}`);
+      return null;
     }
   }
 
-  if (file.name.toLowerCase().endsWith(".ply") || file.name.toLowerCase().endsWith(".compressed.ply")) {
-    await loadPointCloudFromUrl(activeContentUrl, `${file.name} (point cloud fallback)`);
-    return;
-  }
-
-  setStatus("Splat load failed.");
+  return null;
 }
 
 function onZoomChange() {
   portalZoom = Math.max(0.05, Number(zoomInput.value));
+  updatePortalBaseCamera();
+  updateViewerCamera(getActivePose());
   setStatus(`Zoom: ${portalZoom.toFixed(2)}x`);
 }
 
@@ -390,7 +459,7 @@ async function loadPointCloudFromUrl(url, label) {
   const loader = new PLYLoader();
 
   try {
-    clearActiveSplatViewer();
+    disableViewerMode();
     const geometry = await loader.loadAsync(url);
     geometry.computeBoundingSphere();
 
@@ -414,6 +483,9 @@ async function loadPointCloudFromUrl(url, label) {
 
     activePointCloud = new THREE.Points(geometry, material);
     activePointCloud.position.set(0, 0.72, -3.1);
+    if (label.toLowerCase().includes(".ply")) {
+      activePointCloud.rotation.x = -Math.PI * 0.5;
+    }
     root.add(activePointCloud);
     setStatus(`Loaded point cloud: ${label}`);
   } catch (error) {
@@ -421,44 +493,306 @@ async function loadPointCloudFromUrl(url, label) {
   }
 }
 
-async function loadGaussianSplatFromUrl(url, label, sceneFormat) {
+async function loadGaussianSplatWithViewer(blob, label, contentName = label, preferredTransform = null) {
+  clearActivePointCloud();
+  disableViewerMode();
+
+  const transientUrls = [];
+  const contentFetchUrl = typeof blob === "string" ? blob : URL.createObjectURL(blob);
+  if (typeof blob !== "string") transientUrls.push(contentFetchUrl);
+  const resolvedContentName =
+    contentName && /\.[a-z0-9]+$/i.test(contentName)
+      ? contentName
+      : label && /\.[a-z0-9]+$/i.test(label)
+        ? label
+        : "scene.ply";
+  const contentUrl =
+    typeof blob === "string"
+      ? blob
+      : `https://viewer.local/${encodeURIComponent(resolvedContentName)}`;
+  const settingsUrl = URL.createObjectURL(
+    new Blob([JSON.stringify(buildViewerSettings(), null, 2)], { type: "application/json" }),
+  );
+  transientUrls.push(settingsUrl);
+  const cssUrl = URL.createObjectURL(new Blob([supersplatCss], { type: "text/css" }));
+  transientUrls.push(cssUrl);
+  const jsUrl = URL.createObjectURL(new Blob([supersplatJs], { type: "text/javascript" }));
+  transientUrls.push(jsUrl);
+  viewerAssetUrls = transientUrls;
+
+  viewerMessageHandlerToken += 1;
+  const token = viewerMessageHandlerToken;
+  const viewerDocument = buildSupersplatDocument({
+    contentFetchUrl,
+    contentUrl,
+    settingsUrl,
+    cssUrl,
+    jsUrl,
+  });
+
+  enableViewerMode();
+  setStatus(`Loading Gaussian splat: ${label}`);
+  viewerFrame.srcdoc = viewerDocument;
+
   try {
-    clearActivePointCloud();
-    clearActiveSplatViewer();
-    activeSplatViewer = createSplatViewer();
-
-    await activeSplatViewer.addSplatScene(url, {
-      format: sceneFormat,
-      progressiveLoad: false,
-      splatAlphaRemovalThreshold: 0,
-      position: [0, 0.72, -3.1],
-      rotation: [0, 0, 1, 0],
-      scale: [1, 1, 1],
-      showLoadingUI: false,
-    });
-
+    await waitForViewerFirstFrame(token, 20000);
+    viewerReady = true;
+    applyPreferredSplatTransform(preferredTransform);
+    captureViewerBaseCamera();
+    lockViewerCamera();
+    updateViewerCamera(getActivePose(), true);
     setStatus(`Loaded Gaussian splat: ${label}`);
     return true;
   } catch (error) {
-    clearActiveSplatViewer();
+    disableViewerMode();
     setStatus(`Gaussian splat load failed: ${error.message}`);
     return false;
   }
 }
 
-function createSplatViewer() {
-  return new GaussianSplats3D.Viewer({
-    selfDrivenMode: false,
-    renderer,
-    camera,
-    threeScene: scene,
-    useBuiltInControls: false,
-    gpuAcceleratedSort: false,
-    sharedMemoryForWorkers: false,
-    sphericalHarmonicsDegree: 0,
-    sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
-    integerBasedSort: false,
+function buildViewerSettings() {
+  return {
+    background: { color: [0, 0, 0, 1] },
+    camera: {
+      fov: 65,
+      position: [portalBasePosition.x, portalBasePosition.y, portalBasePosition.z],
+      target: [portalBaseTarget.x, portalBaseTarget.y, portalBaseTarget.z],
+      startAnim: "none",
+      animTrack: "",
+    },
+    animTracks: [],
+  };
+}
+
+function buildSupersplatDocument({ contentFetchUrl, contentUrl, settingsUrl, cssUrl, jsUrl }) {
+  const bridgeScript = `
+const settingsUrl = ${JSON.stringify(settingsUrl)};
+const contentFetchUrl = ${JSON.stringify(contentFetchUrl)};
+const contentUrl = ${JSON.stringify(contentUrl)};
+window.firstFrame = () => {
+  window.parent.postMessage({ source: "xr-off-axis-supersplat", type: "supersplat:first-frame" }, "*");
+};
+window.addEventListener("error", (event) => {
+  window.parent.postMessage(
+    {
+      source: "xr-off-axis-supersplat",
+      type: "supersplat:error",
+      message: event.message || "Unknown viewer error"
+    },
+    "*"
+  );
+});
+window.addEventListener("unhandledrejection", (event) => {
+  window.parent.postMessage(
+    {
+      source: "xr-off-axis-supersplat",
+      type: "supersplat:error",
+      message: event.reason?.message || String(event.reason || "Unhandled viewer rejection")
+    },
+    "*"
+  );
+});
+const sseConfig = {
+  poster: null,
+  skyboxUrl: null,
+  voxelUrl: null,
+  contentUrl,
+  contents: fetch(contentFetchUrl),
+  noui: true,
+  noanim: true,
+  nofx: false,
+  hpr: undefined,
+  ministats: false,
+  colorize: false,
+  unified: false,
+  webgpu: false,
+  gpusort: false,
+  aa: true,
+  heatmap: false,
+};
+window.sse = {
+  config: sseConfig,
+  settings: fetch(settingsUrl).then((response) => response.json()),
+};
+`;
+
+  return supersplatHtml
+    .replaceAll("./index.css", cssUrl)
+    .replaceAll("./index.js", jsUrl)
+    .replace(/const url = new URL\(location\.href\);[\s\S]*?window\.sse = \{[\s\S]*?\};/, bridgeScript)
+    .replace(
+      "const viewer = await main(canvas, settingsJson, config);",
+      'window.viewer = await main(canvas, settingsJson, config);',
+    );
+}
+
+function waitForViewerFirstFrame(token, timeoutMs) {
+  if (viewerRejectLoad) viewerRejectLoad(new Error("Superseded by a newer load."));
+
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      if (viewerMessageHandlerToken !== token) return;
+      viewerResolveLoad = null;
+      viewerRejectLoad = null;
+      reject(new Error("Viewer timed out before first frame."));
+    }, timeoutMs);
+
+    viewerResolveLoad = () => {
+      window.clearTimeout(timer);
+      viewerResolveLoad = null;
+      viewerRejectLoad = null;
+      resolve();
+    };
+
+    viewerRejectLoad = (error) => {
+      window.clearTimeout(timer);
+      viewerResolveLoad = null;
+      viewerRejectLoad = null;
+      reject(error);
+    };
   });
+}
+
+function onViewerMessage(event) {
+  if (event.source !== viewerFrame.contentWindow) return;
+  const data = event.data;
+  if (!data || data.source !== "xr-off-axis-supersplat") return;
+
+  if (data.type === "supersplat:first-frame") {
+    viewerResolveLoad?.();
+    return;
+  }
+
+  if (data.type === "supersplat:error") {
+    viewerRejectLoad?.(new Error(data.message || "Unknown viewer error"));
+  }
+}
+
+function enableViewerMode() {
+  viewerModeActive = true;
+  viewerReady = false;
+  canvasWrap.classList.add("viewer-active");
+}
+
+function disableViewerMode() {
+  viewerModeActive = false;
+  viewerReady = false;
+  canvasWrap.classList.remove("viewer-active");
+  const viewer = getViewerInstance();
+  if (viewer?.global?.camera?.camera) {
+    viewer.global.camera.camera.calculateProjection = null;
+  }
+  viewerFrame.srcdoc = "";
+  cleanupViewerAssets();
+}
+
+function cleanupViewerAssets() {
+  viewerAssetUrls.forEach((url) => URL.revokeObjectURL(url));
+  viewerAssetUrls = [];
+}
+
+function lockViewerCamera() {
+  const viewer = getViewerInstance();
+  if (!viewer) return;
+  viewer.inputController = null;
+  viewer.cameraManager = null;
+}
+
+function getViewerInstance() {
+  return viewerFrame.contentWindow?.viewer ?? null;
+}
+
+function updateViewerCamera(pose, force = false) {
+  if (!viewerModeActive || !viewerReady) return;
+
+  const viewer = getViewerInstance();
+  if (!viewer) return;
+
+  const headWorld = headPoseToWorldPosition(pose);
+  const neutralDistance = getNeutralViewingDistance();
+  const screenWidthM = calibration.screenWidthCm * 0.01;
+  const screenHeightM = calibration.screenHeightCm * 0.01;
+  const near = 0.01;
+  const far = 1000;
+  const viewerToScreenDistance = headWorld.z;
+  const nOverD = near / viewerToScreenDistance;
+  const screenLeft = -screenWidthM * 0.5;
+  const screenRight = screenWidthM * 0.5;
+  const screenBottom = -screenHeightM * 0.5;
+  const screenTop = screenHeightM * 0.5;
+  const left = (screenLeft - headWorld.x) * nOverD;
+  const right = (screenRight - headWorld.x) * nOverD;
+  const bottom = (screenBottom - headWorld.y) * nOverD;
+  const top = (screenTop - headWorld.y) * nOverD;
+
+  viewerDeltaQuaternion.setFromEuler(new THREE.Euler(portalPitch, portalYaw, 0, "YXZ"));
+  viewerPoseQuaternion.setFromEuler(new THREE.Euler(pose.pitch * 0.08, -pose.yaw * 0.1, pose.roll * 0.08));
+  viewerRight.set(1, 0, 0).applyQuaternion(viewerBaseQuaternion).applyQuaternion(viewerDeltaQuaternion);
+  viewerUp.set(0, 1, 0).applyQuaternion(viewerBaseQuaternion).applyQuaternion(viewerDeltaQuaternion);
+  viewerForward
+    .set(0, 0, -1)
+    .applyQuaternion(viewerBaseQuaternion)
+    .applyQuaternion(viewerDeltaQuaternion)
+    .applyQuaternion(viewerPoseQuaternion);
+  viewerPosition
+    .copy(viewerBasePosition)
+    .addScaledVector(viewerRight, headWorld.x)
+    .addScaledVector(viewerUp, headWorld.y)
+    .addScaledVector(viewerForward, neutralDistance - headWorld.z);
+  viewerTarget.copy(viewerPosition).add(viewerForward);
+
+  const viewerCamera = viewer.global.camera;
+  viewerCamera.setPosition(viewerPosition.x, viewerPosition.y, viewerPosition.z);
+  viewerCamera.lookAt(viewerTarget.x, viewerTarget.y, viewerTarget.z);
+  viewerCamera.camera.nearClip = near;
+  viewerCamera.camera.farClip = far;
+  viewerCamera.camera.calculateProjection = (projectionMatrix) => {
+    projectionMatrix.setFrustum(left, right, bottom, top, near, far);
+  };
+  viewer.global.app.renderNextFrame = true;
+  if (force) viewer.global.app.start();
+}
+
+function captureViewerBaseCamera() {
+  const viewer = getViewerInstance();
+  if (!viewer) return;
+
+  const viewerCamera = viewer.global.camera;
+  const position = viewerCamera.getPosition();
+  const rotation = viewerCamera.getRotation();
+
+  viewerBasePosition.set(position.x, position.y, position.z);
+  viewerBaseQuaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+}
+
+function getPreferredSplatTransform(name) {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".ply") || lower.endsWith(".compressed.ply")) {
+    return {
+      position: [0, 0, 0],
+      rotation: [-90, 0, 180],
+      scale: [1, 1, 1],
+    };
+  }
+  return null;
+}
+
+function applyPreferredSplatTransform(transform) {
+  if (!transform) return;
+  const viewer = getViewerInstance();
+  const gsplat = viewer?.global?.app?.root?.children?.find((child) => child.name === "gsplat");
+  if (!gsplat) return;
+
+  if (transform.position) {
+    gsplat.setLocalPosition(transform.position[0], transform.position[1], transform.position[2]);
+  }
+  if (transform.rotation) {
+    gsplat.setLocalEulerAngles(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
+  }
+  if (transform.scale) {
+    gsplat.setLocalScale(transform.scale[0], transform.scale[1], transform.scale[2]);
+  }
+  viewer.global.app.renderNextFrame = true;
 }
 
 function clearActivePointCloud() {
@@ -469,21 +803,68 @@ function clearActivePointCloud() {
   activePointCloud = null;
 }
 
-function clearActiveSplatViewer() {
-  if (!activeSplatViewer) return;
-  if (typeof activeSplatViewer.stop === "function") activeSplatViewer.stop();
-  if (typeof activeSplatViewer.dispose === "function") activeSplatViewer.dispose();
-  activeSplatViewer = null;
+function loadCalibration() {
+  try {
+    const stored = localStorage.getItem(CALIBRATION_STORAGE_KEY);
+    if (!stored) return { ...calibrationDefaults };
+    return { ...calibrationDefaults, ...JSON.parse(stored) };
+  } catch {
+    return { ...calibrationDefaults };
+  }
 }
 
-function getSplatSceneFormat(name) {
-  const lower = name.toLowerCase();
-  if (lower.endsWith(".compressed.ply")) return GaussianSplats3D.SceneFormat.Ply;
-  if (lower.endsWith(".ply")) return GaussianSplats3D.SceneFormat.Ply;
-  if (lower.endsWith(".splat")) return GaussianSplats3D.SceneFormat.Splat;
-  if (lower.endsWith(".ksplat")) return GaussianSplats3D.SceneFormat.KSplat;
-  if (lower.endsWith(".spz")) return GaussianSplats3D.SceneFormat.Ply;
-  return null;
+function saveCalibration() {
+  localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(calibration));
+}
+
+function syncCalibrationInputs() {
+  screenWidthInput.value = String(calibration.screenWidthCm);
+  screenHeightInput.value = String(calibration.screenHeightCm);
+  viewDistanceInput.value = String(calibration.viewingDistanceCm);
+}
+
+function onSaveCalibration() {
+  calibration.screenWidthCm = Math.max(10, Number(screenWidthInput.value) || calibration.screenWidthCm);
+  calibration.screenHeightCm = Math.max(10, Number(screenHeightInput.value) || calibration.screenHeightCm);
+  calibration.viewingDistanceCm = Math.max(20, Number(viewDistanceInput.value) || calibration.viewingDistanceCm);
+  saveCalibration();
+  updatePortalBaseCamera();
+  updateViewerCamera(getActivePose(), true);
+  setStatus("Calibration saved.");
+}
+
+function getNeutralViewingDistance() {
+  return (calibration.viewingDistanceCm * 0.01) / portalZoom;
+}
+
+function headPoseToWorldPosition(pose) {
+  const screenWidthWorld = calibration.screenWidthCm * 0.01;
+  const screenHeightWorld = calibration.screenHeightCm * 0.01;
+  const movementScale = 1.5;
+  const baseDistance = getNeutralViewingDistance();
+
+  return {
+    x: -(pose.x - 0.5) * screenWidthWorld * movementScale,
+    y: -(pose.y - 0.5) * screenHeightWorld * movementScale,
+    z: THREE.MathUtils.clamp(baseDistance * (1 / pose.z), 0.14, 2.5),
+  };
+}
+
+async function bootstrapRemoteScene() {
+  const contentUrl = pageParams.get("content");
+  if (!contentUrl) return;
+
+  const label =
+    pageParams.get("label") ||
+    (() => {
+      try {
+        return new URL(contentUrl).pathname.split("/").pop() || "remote splat";
+      } catch {
+        return "remote splat";
+      }
+    })();
+
+  await loadGaussianSplatWithViewer(contentUrl, label, label);
 }
 
 async function normalizeToPly(file) {
@@ -534,18 +915,22 @@ async function normalizeToPly(file) {
 function animate() {
   requestAnimationFrame(animate);
   const pose = getActivePose();
-  applyOffAxisProjection(pose);
-  if (activeSplatViewer) {
-    activeSplatViewer.update();
-    activeSplatViewer.render();
-  } else {
-    renderer.render(scene, camera);
+
+  if (viewerModeActive) {
+    updateViewerCamera(pose);
+    return;
   }
+
+  applyOffAxisProjection(pose);
+  renderer.render(scene, camera);
 }
 
 function onResize() {
   const width = canvas.clientWidth || canvas.parentElement.clientWidth;
   const height = canvas.clientHeight || canvas.parentElement.clientHeight;
+  calibration.pixelWidth = width;
+  calibration.pixelHeight = height;
+  saveCalibration();
   camera.aspect = Math.max(0.2, width / Math.max(1, height));
   renderer.setSize(width, height, false);
 }
