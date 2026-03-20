@@ -1,5 +1,6 @@
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 import * as GaussianSplats3D from "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/+esm";
+import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js?module";
 import { FaceTracker } from "./face-tracker.js";
 
 const canvas = document.getElementById("scene-canvas");
@@ -29,6 +30,14 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const camera = new THREE.PerspectiveCamera(55, 1, 0.05, 200);
 camera.position.set(0, 1.55, 4.3);
 camera.lookAt(0, 1.2, 0);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 0.05;
+controls.maxDistance = 300;
+controls.target.set(0, 1.2, 0);
+controls.update();
+controls.saveState();
 
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
@@ -36,6 +45,11 @@ const pointerNdc = new THREE.Vector2();
 const pointerPos = new THREE.Vector2();
 const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.6);
 const dragHit = new THREE.Vector3();
+const baseCameraPosition = new THREE.Vector3();
+const baseCameraQuaternion = new THREE.Quaternion();
+const poseOffset = new THREE.Vector3();
+const poseEuler = new THREE.Euler();
+const poseQuaternion = new THREE.Quaternion();
 
 let rotateMode = false;
 let draggingCharacter = false;
@@ -177,6 +191,7 @@ function setupPointerEvents() {
     const hits = raycaster.intersectObject(character, true);
     if (!hits.length) return;
     draggingCharacter = true;
+    controls.enabled = false;
     canvas.setPointerCapture(event.pointerId);
   });
 
@@ -200,6 +215,7 @@ function setupPointerEvents() {
   canvas.addEventListener("pointerup", (event) => {
     if (!draggingCharacter) return;
     draggingCharacter = false;
+    controls.enabled = true;
     canvas.releasePointerCapture(event.pointerId);
   });
 }
@@ -295,9 +311,8 @@ function resetView() {
   manualX.value = "0";
   manualY.value = "0";
   manualZ.value = "0";
-  camera.position.set(0, 1.55, 4.3);
-  camera.rotation.set(0, 0, 0);
-  camera.lookAt(0, 1.2, 0);
+  controls.reset();
+  controls.update();
   activeSplatScale = 1;
   splatScaleInput.value = "1";
   if (activeSplatViewer) activeSplatViewer.scale.setScalar(activeSplatScale);
@@ -333,10 +348,19 @@ function applyOffAxisProjection(pose) {
   camera.projectionMatrix.copy(frustum);
   camera.projectionMatrixInverse.copy(frustum).invert();
 
-  camera.position.x = pose.x * offAxisSettings.cameraXGain;
-  camera.position.y = 1.55 + pose.y * offAxisSettings.cameraYGain;
-  camera.position.z = 4.3 + pose.z * offAxisSettings.cameraZGain;
-  camera.rotation.set(pose.pitch * 0.18, -pose.yaw * 0.22, pose.roll * 0.25);
+  baseCameraPosition.copy(camera.position);
+  baseCameraQuaternion.copy(camera.quaternion);
+
+  poseOffset.set(
+    pose.x * offAxisSettings.cameraXGain,
+    pose.y * offAxisSettings.cameraYGain,
+    pose.z * offAxisSettings.cameraZGain,
+  );
+  camera.position.copy(baseCameraPosition).add(poseOffset);
+
+  poseEuler.set(pose.pitch * 0.18, -pose.yaw * 0.22, pose.roll * 0.25);
+  poseQuaternion.setFromEuler(poseEuler);
+  camera.quaternion.copy(baseCameraQuaternion).multiply(poseQuaternion);
 }
 
 function makeFrustum(left, right, bottom, top, near, far) {
@@ -407,8 +431,6 @@ async function loadSplatFromUrl(url, label) {
       },
     ]);
 
-    // SHARP scenes can be offset and use OpenCV coordinates; this keeps them in view.
-    activeSplatViewer.rotation.x = Math.PI;
     setStatus(`Loaded splat: ${label}`);
   } catch (error) {
     setStatus(`Splat load failed: ${error.message}`);
@@ -423,6 +445,7 @@ function isSplatFile(name) {
 function animate() {
   requestAnimationFrame(animate);
   const elapsed = clock.getElapsedTime();
+  controls.update();
   const pose = getActivePose();
   applyOffAxisProjection(pose);
   root.rotation.y = Math.sin(elapsed * 0.2) * 0.05;
