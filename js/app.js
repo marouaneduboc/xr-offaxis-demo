@@ -28,8 +28,9 @@ const portalBasePosition = new THREE.Vector3(0, 0, 0.55);
 const portalBaseTarget = new THREE.Vector3(0, 0, -1);
 const portalBaseQuaternion = new THREE.Quaternion();
 const portalForward = new THREE.Vector3(0, 0, -1);
+const defaultPortalPitch = -0.12;
 let portalYaw = 0;
-let portalPitch = 0;
+let portalPitch = defaultPortalPitch;
 let dragLookActive = false;
 let lastDragX = 0;
 let lastDragY = 0;
@@ -82,7 +83,15 @@ grid.material.transparent = true;
 scene.add(grid);
 
 const character = createCharacter();
+character.position.set(0, 0, -2);
 scene.add(character);
+
+const debugMarker = new THREE.Mesh(
+  new THREE.BoxGeometry(0.18, 0.18, 0.18),
+  new THREE.MeshStandardMaterial({ color: 0xff7b5c, emissive: 0x662211, emissiveIntensity: 0.5 }),
+);
+debugMarker.position.set(0, 0.8, -2.5);
+scene.add(debugMarker);
 
 const faceTracker = new FaceTracker({
   onPose: (pose) => {
@@ -219,7 +228,7 @@ function resetView() {
 
 function recenterPortal() {
   portalYaw = 0;
-  portalPitch = 0;
+  portalPitch = defaultPortalPitch;
   updatePortalBaseCamera();
   setStatus("Portal recentered.");
 }
@@ -364,6 +373,8 @@ async function loadPointCloudFromUrl(url, label) {
     }
 
     const radius = geometry.boundingSphere?.radius ?? 1;
+    const center = geometry.boundingSphere?.center ?? new THREE.Vector3();
+    geometry.translate(-center.x, -center.y, -center.z);
     const hasColor = !!geometry.getAttribute("color");
     const material = new THREE.PointsMaterial({
       size: Math.max(0.002, radius * 0.01),
@@ -373,6 +384,7 @@ async function loadPointCloudFromUrl(url, label) {
     });
 
     activePointCloud = new THREE.Points(geometry, material);
+    activePointCloud.position.set(0, 0.2, -2.5);
     root.add(activePointCloud);
     setStatus(`Loaded point cloud: ${label}`);
   } catch (error) {
