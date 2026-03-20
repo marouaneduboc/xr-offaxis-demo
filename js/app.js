@@ -1,6 +1,5 @@
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
-import { GLTFLoader } from "https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js?module";
-import { DRACOLoader } from "https://unpkg.com/three@0.160.0/examples/jsm/loaders/DRACOLoader.js?module";
+import * as GaussianSplats3D from "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/+esm";
 import { FaceTracker } from "./face-tracker.js";
 
 const canvas = document.getElementById("scene-canvas");
@@ -8,7 +7,8 @@ const statusText = document.getElementById("status-text");
 const trackingBtn = document.getElementById("toggle-tracking-btn");
 const rotateBtn = document.getElementById("toggle-rotate-btn");
 const resetBtn = document.getElementById("reset-view-btn");
-const glbUploadInput = document.getElementById("glb-upload");
+const splatUploadInput = document.getElementById("splat-upload");
+const splatScaleInput = document.getElementById("splat-scale");
 const manualX = document.getElementById("manual-x");
 const manualY = document.getElementById("manual-y");
 const manualZ = document.getElementById("manual-z");
@@ -61,8 +61,9 @@ const offAxisSettings = {
 
 const root = new THREE.Group();
 scene.add(root);
-let activeSceneModel = null;
-let activeBlobUrl = null;
+let activeSplatViewer = null;
+let activeSplatBlobUrl = null;
+let activeSplatScale = 1;
 
 const hemiLight = new THREE.HemisphereLight(0xb4ccff, 0x334466, 0.95);
 scene.add(hemiLight);
@@ -104,7 +105,6 @@ const faceTracker = new FaceTracker({
 setupUiEvents();
 setupPointerEvents();
 setupOrientationFallback();
-loadGlbModel();
 onResize();
 animate();
 
@@ -165,7 +165,8 @@ function setupUiEvents() {
   manualX.addEventListener("input", onManualInput);
   manualY.addEventListener("input", onManualInput);
   manualZ.addEventListener("input", onManualInput);
-  glbUploadInput.addEventListener("change", onGlbUploadChange);
+  splatUploadInput.addEventListener("change", onSplatUploadChange);
+  splatScaleInput.addEventListener("input", onSplatScaleChange);
 }
 
 function setupPointerEvents() {
@@ -297,6 +298,9 @@ function resetView() {
   camera.position.set(0, 1.55, 4.3);
   camera.rotation.set(0, 0, 0);
   camera.lookAt(0, 1.2, 0);
+  activeSplatScale = 1;
+  splatScaleInput.value = "1";
+  if (activeSplatViewer) activeSplatViewer.scale.setScalar(activeSplatScale);
   setStatus("View reset.");
 }
 
@@ -351,65 +355,69 @@ function makeFrustum(left, right, bottom, top, near, far) {
   );
 }
 
-function loadGlbModel(url = "./models/scene.glb", sourceLabel = "./models/scene.glb", showFallback = true) {
-  const loader = new GLTFLoader();
-  const dracoLoader = new DRACOLoader();
-  dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
-  loader.setDRACOLoader(dracoLoader);
-
-  loader.load(
-    url,
-    (gltf) => {
-      const model = gltf.scene;
-      model.position.set(0, 0, 0);
-      model.scale.setScalar(1.0);
-      replaceActiveModel(model);
-      setStatus(`Loaded ${sourceLabel}.`);
-    },
-    undefined,
-    () => {
-      if (!showFallback) {
-        setStatus(`Could not load ${sourceLabel}. Use a valid .glb file.`);
-        return;
-      }
-      replaceActiveModel(createFallbackModel());
-      setStatus("Model missing/invalid. Replace ./models/scene.glb or upload a GLB.");
-    },
-  );
-}
-
-function onGlbUploadChange(event) {
+async function onSplatUploadChange(event) {
   const file = event.target.files?.[0];
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith(".glb")) {
-    setStatus("Please select a .glb file.");
+  if (!isSplatFile(file.name)) {
+    setStatus("Please select a .ply, .splat, or .ksplat file.");
     return;
   }
 
-  if (activeBlobUrl) URL.revokeObjectURL(activeBlobUrl);
-  activeBlobUrl = URL.createObjectURL(file);
-  loadGlbModel(activeBlobUrl, file.name, false);
+  if (activeSplatBlobUrl) URL.revokeObjectURL(activeSplatBlobUrl);
+  activeSplatBlobUrl = URL.createObjectURL(file);
+  await loadSplatFromUrl(activeSplatBlobUrl, file.name);
 }
 
-function replaceActiveModel(nextModel) {
-  if (activeSceneModel) root.remove(activeSceneModel);
-  activeSceneModel = nextModel;
-  root.add(activeSceneModel);
+function onSplatScaleChange() {
+  activeSplatScale = Number(splatScaleInput.value);
+  if (activeSplatViewer) {
+    activeSplatViewer.scale.setScalar(activeSplatScale);
+    setStatus(`Splat scale: ${activeSplatScale.toFixed(2)}`);
+  }
 }
 
-function createFallbackModel() {
-  const fallback = new THREE.Mesh(
-    new THREE.TorusKnotGeometry(0.55, 0.16, 144, 18),
-    new THREE.MeshStandardMaterial({
-      color: 0x8aa6ff,
-      metalness: 0.3,
-      roughness: 0.4,
-      emissive: 0x132047,
-      emissiveIntensity: 0.42,
-    }),
-  );
-  fallback.position.set(0, 1.4, -1.2);
-  return fallback;
+async function loadSplatFromUrl(url, label) {
+  try {
+    if (activeSplatViewer) {
+      root.remove(activeSplatViewer);
+      if (typeof activeSplatViewer.dispose === "function") activeSplatViewer.dispose();
+      activeSplatViewer = null;
+    }
+
+    activeSplatViewer = new GaussianSplats3D.DropInViewer({
+      gpuAcceleratedSort: false,
+      sharedMemoryForWorkers: false,
+      sphericalHarmonicsDegree: 1,
+      sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
+      // Keep output stable on GitHub Pages where COOP/COEP headers are unavailable.
+      integerBasedSort: false,
+    });
+    activeSplatViewer.position.set(0, 0, 0);
+    activeSplatViewer.scale.setScalar(activeSplatScale);
+    root.add(activeSplatViewer);
+
+    await activeSplatViewer.addSplatScenes([
+      {
+        path: url,
+        progressiveLoad: true,
+        splatAlphaRemovalThreshold: 5,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+      },
+    ]);
+
+    // SHARP scenes can be offset and use OpenCV coordinates; this keeps them in view.
+    activeSplatViewer.rotation.x = Math.PI;
+    setStatus(`Loaded splat: ${label}`);
+  } catch (error) {
+    setStatus(`Splat load failed: ${error.message}`);
+  }
+}
+
+function isSplatFile(name) {
+  const lower = name.toLowerCase();
+  return lower.endsWith(".ply") || lower.endsWith(".splat") || lower.endsWith(".ksplat");
 }
 
 function animate() {

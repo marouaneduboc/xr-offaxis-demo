@@ -1,12 +1,5 @@
-# Model Placeholder
+# Notes
 
-Replace `scene.glb` in this folder with your Blender export.
+This demo now uses runtime Gaussian splat upload (`.ply`, `.splat`, `.ksplat`) from the UI.
 
-## Blender export tips
-
-- Export format: glTF Binary (`.glb`)
-- Apply transforms before export (location/rotation/scale)
-- Include textures inside the `.glb`
-- If using Draco compression, keep decoder path in `js/app.js` unchanged
-
-The demo attempts to load `./models/scene.glb` at startup. If loading fails, a fallback mesh is shown.
+No bundled GLB scene is required.

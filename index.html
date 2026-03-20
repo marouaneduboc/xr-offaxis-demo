@@ -15,9 +15,15 @@
       <aside id="ui-overlay">
         <h1>XR Off-Axis Projection Demo</h1>
         <p class="instructions">
-          Drag the character to move it. Toggle rotate mode to spin it with drag.
-          Enable face tracking for webcam-driven off-axis projection.
+          Load a Gaussian splat (`.ply`, `.splat`, `.ksplat`), then move your head
+          or use manual sliders to feel the off-axis depth effect.
         </p>
+        <ol class="quickstart">
+          <li>Press <strong>Load Splat File</strong> and pick your SHARP/3DGS file.</li>
+          <li>If the splat appears too large/small, adjust <strong>Splat Scale</strong>.</li>
+          <li>Enable <strong>Face Tracking</strong> (or use Manual X/Y/Z sliders).</li>
+          <li>Drag the pawn to move it, or switch to rotate mode to spin it.</li>
+        </ol>
 
         <div class="controls">
           <button id="toggle-tracking-btn" type="button">Enable Face Tracking</button>
@@ -26,8 +32,10 @@
         </div>
 
         <div class="model-loader">
-          <label for="glb-upload">Load your GLB</label>
-          <input id="glb-upload" type="file" accept=".glb,model/gltf-binary" />
+          <label for="splat-upload">Load Splat File</label>
+          <input id="splat-upload" type="file" accept=".ply,.splat,.ksplat" />
+          <label for="splat-scale">Splat Scale</label>
+          <input id="splat-scale" type="range" min="0.01" max="5" step="0.01" value="1" />
         </div>
 
         <div class="sliders">
