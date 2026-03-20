@@ -24,8 +24,8 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const camera = new THREE.PerspectiveCamera(70, 1, 0.03, 200);
-const portalBasePosition = new THREE.Vector3(0, 0, 0.55);
-const portalBaseTarget = new THREE.Vector3(0, 0, -1);
+const portalBasePosition = new THREE.Vector3(0, 1.1, 0.55);
+const portalBaseTarget = new THREE.Vector3(0, 0.85, -1);
 const portalBaseQuaternion = new THREE.Quaternion();
 const portalForward = new THREE.Vector3(0, 0, -1);
 const defaultPortalPitch = -0.12;
@@ -90,7 +90,7 @@ const debugMarker = new THREE.Mesh(
   new THREE.BoxGeometry(0.18, 0.18, 0.18),
   new THREE.MeshStandardMaterial({ color: 0xff7b5c, emissive: 0x662211, emissiveIntensity: 0.5 }),
 );
-debugMarker.position.set(0, 0.8, -2.5);
+debugMarker.position.set(0, 1.0, -2.5);
 scene.add(debugMarker);
 
 const faceTracker = new FaceTracker({
@@ -317,8 +317,8 @@ function applyOffAxisProjection(pose) {
   camera.projectionMatrix.copy(frustum);
   camera.projectionMatrixInverse.copy(frustum).invert();
 
-  poseOffset.set(eyeX, eyeY, eyeZ);
-  camera.position.copy(poseOffset);
+  poseOffset.set(eyeX, eyeY, eyeZ - baseDistanceM);
+  camera.position.copy(portalBasePosition).add(poseOffset);
   poseEuler.set(pose.pitch * 0.08, -pose.yaw * 0.1, pose.roll * 0.08);
   poseQuaternion.setFromEuler(poseEuler);
   camera.quaternion.copy(portalBaseQuaternion).multiply(poseQuaternion);
@@ -384,7 +384,7 @@ async function loadPointCloudFromUrl(url, label) {
     });
 
     activePointCloud = new THREE.Points(geometry, material);
-    activePointCloud.position.set(0, 0.2, -2.5);
+    activePointCloud.position.set(0, 1.0, -2.5);
     root.add(activePointCloud);
     setStatus(`Loaded point cloud: ${label}`);
   } catch (error) {
