@@ -1,0 +1,143 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --panel: rgba(7, 12, 28, 0.82);
+  --panel-border: rgba(124, 155, 255, 0.35);
+  --text: #e7edff;
+  --muted: #9fb1e9;
+  --accent: #6ea8ff;
+  --accent-strong: #94d5ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: radial-gradient(circle at top right, #192a5d 0%, var(--bg) 55%);
+  color: var(--text);
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+#app {
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+#canvas-wrap {
+  position: relative;
+  min-height: 72vh;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+#scene-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: linear-gradient(180deg, #101937 0%, #080c1a 100%);
+}
+
+#ui-overlay {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.95rem;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(6px);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.06rem;
+}
+
+.instructions {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.controls {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.model-loader {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.55rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.model-loader label {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.model-loader input[type="file"] {
+  width: 100%;
+  color: var(--text);
+}
+
+button {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  background: rgba(110, 168, 255, 0.2);
+  color: var(--text);
+  padding: 0.55rem 0.7rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button:hover {
+  border-color: var(--accent);
+  background: rgba(110, 168, 255, 0.32);
+}
+
+.sliders {
+  display: grid;
+  gap: 0.65rem;
+}
+
+label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+input[type="range"] {
+  width: 100%;
+}
+
+#status-text {
+  margin: 0;
+  padding: 0.6rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--accent-strong);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 900px) {
+  #app {
+    grid-template-columns: 1fr;
+  }
+
+  #canvas-wrap {
+    min-height: 58vh;
+  }
+}
