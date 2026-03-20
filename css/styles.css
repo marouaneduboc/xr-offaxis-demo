@@ -73,10 +73,18 @@ body {
   display: block;
 }
 
+#menu-toggle-btn {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 12;
+}
+
 #ui-overlay {
   position: fixed;
   top: 0.75rem;
   left: 0.75rem;
+  z-index: 11;
   width: min(360px, calc(100vw - 1.5rem));
   display: flex;
   flex-direction: column;
@@ -86,6 +94,13 @@ body {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   backdrop-filter: blur(6px);
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+#ui-overlay.is-hidden {
+  transform: translateX(calc(-100% - 1.25rem));
+  opacity: 0;
+  pointer-events: none;
 }
 
 h1 {
@@ -254,6 +269,11 @@ button:active {
 }
 
 @media (max-width: 900px) {
+  #menu-toggle-btn {
+    top: 0.5rem;
+    left: 0.5rem;
+  }
+
   #ui-overlay {
     top: 0.5rem;
     left: 0.5rem;

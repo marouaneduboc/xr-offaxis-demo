@@ -11,6 +11,8 @@ const canvasWrap = document.getElementById("canvas-wrap");
 const canvas = document.getElementById("scene-canvas");
 const viewerFrame = document.getElementById("splat-viewer-frame");
 const viewerDragSurface = document.getElementById("viewer-drag-surface");
+const menuToggleBtn = document.getElementById("menu-toggle-btn");
+const uiOverlay = document.getElementById("ui-overlay");
 const statusText = document.getElementById("status-text");
 const trackingBtn = document.getElementById("toggle-tracking-btn");
 const resetBtn = document.getElementById("reset-view-btn");
@@ -42,7 +44,7 @@ const portalBasePosition = new THREE.Vector3(0, 0, 0.9);
 const portalBaseTarget = new THREE.Vector3(0, 0, -1);
 const portalBaseQuaternion = new THREE.Quaternion();
 const portalForward = new THREE.Vector3(0, 0, -1);
-const defaultPortalPitch = -0.04;
+const defaultPortalPitch = 0;
 let portalYaw = 0;
 let portalPitch = defaultPortalPitch;
 let dragLookActive = false;
@@ -78,6 +80,9 @@ let viewerMessageHandlerToken = 0;
 let viewerResolveLoad = null;
 let viewerRejectLoad = null;
 let viewerAssetUrls = [];
+let viewerFitDistance = 0.6;
+let viewerDepthTarget = -0.2;
+let activeViewerTransform = null;
 
 const calibrationDefaults = {
   screenWidthCm: 34,
@@ -112,17 +117,6 @@ grid.material.opacity = 0.38;
 grid.material.transparent = true;
 scene.add(grid);
 
-const character = createCharacter();
-character.position.set(0, -0.18, -5.4);
-scene.add(character);
-
-const debugMarker = new THREE.Mesh(
-  new THREE.BoxGeometry(0.18, 0.18, 0.18),
-  new THREE.MeshStandardMaterial({ color: 0xff7b5c, emissive: 0x662211, emissiveIntensity: 0.5 }),
-);
-debugMarker.position.set(0, 0.72, -5.45);
-scene.add(debugMarker);
-
 const faceTracker = new FaceTracker({
   onPose: (pose) => {
     poseState.face = pose;
@@ -138,25 +132,8 @@ onResize();
 animate();
 bootstrapRemoteScene();
 
-function createCharacter() {
-  const group = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.3, 0.75, 8, 16),
-    new THREE.MeshStandardMaterial({ color: 0x6ea8ff, roughness: 0.42, metalness: 0.25 }),
-  );
-  body.position.y = 1.0;
-  group.add(body);
-
-  const stand = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.42, 0.5, 0.2, 24),
-    new THREE.MeshStandardMaterial({ color: 0x385998, roughness: 0.88, metalness: 0.07 }),
-  );
-  stand.position.y = 0.1;
-  group.add(stand);
-  return group;
-}
-
 function setupUiEvents() {
+  menuToggleBtn.addEventListener("click", toggleMenuOverlay);
   trackingBtn.addEventListener("click", toggleTracking);
   resetBtn.addEventListener("click", resetView);
   recenterPortalBtn.addEventListener("click", recenterPortal);
@@ -271,6 +248,12 @@ function recenterPortal() {
   setStatus("Portal recentered.");
 }
 
+function toggleMenuOverlay() {
+  const isHidden = uiOverlay.classList.toggle("is-hidden");
+  menuToggleBtn.textContent = isHidden ? "Show Menu" : "Hide Menu";
+  menuToggleBtn.setAttribute("aria-expanded", String(!isHidden));
+}
+
 function updatePortalBaseCamera() {
   const viewingDistanceM = getNeutralViewingDistance();
   portalBasePosition.set(0, 0, viewingDistanceM);
@@ -333,8 +316,9 @@ function applyOffAxisProjection(pose) {
   const near = camera.near;
   const far = camera.far;
   const headWorld = headPoseToWorldPosition(pose);
-  const screenWidthM = calibration.screenWidthCm * 0.01;
-  const screenHeightM = calibration.screenHeightCm * 0.01;
+  const screen = getEffectiveScreenSizeMeters();
+  const screenWidthM = screen.width;
+  const screenHeightM = screen.height;
   const screenLeft = -screenWidthM * 0.5;
   const screenRight = screenWidthM * 0.5;
   const screenBottom = -screenHeightM * 0.5;
@@ -451,6 +435,7 @@ async function prepareUpload(file) {
 function onZoomChange() {
   portalZoom = Math.max(0.05, Number(zoomInput.value));
   updatePortalBaseCamera();
+  if (viewerModeActive && viewerReady) syncViewerNeutralCamera();
   updateViewerCamera(getActivePose());
   setStatus(`Zoom: ${portalZoom.toFixed(2)}x`);
 }
@@ -537,8 +522,12 @@ async function loadGaussianSplatWithViewer(blob, label, contentName = label, pre
   try {
     await waitForViewerFirstFrame(token, 20000);
     viewerReady = true;
+    portalYaw = 0;
+    portalPitch = defaultPortalPitch;
+    updatePortalBaseCamera();
+    activeViewerTransform = preferredTransform;
     applyPreferredSplatTransform(preferredTransform);
-    captureViewerBaseCamera();
+    syncViewerNeutralCamera();
     lockViewerCamera();
     updateViewerCamera(getActivePose(), true);
     setStatus(`Loaded Gaussian splat: ${label}`);
@@ -600,14 +589,14 @@ const sseConfig = {
   contents: fetch(contentFetchUrl),
   noui: true,
   noanim: true,
-  nofx: false,
+  nofx: true,
   hpr: undefined,
   ministats: false,
   colorize: false,
   unified: false,
   webgpu: false,
   gpusort: false,
-  aa: true,
+  aa: false,
   heatmap: false,
 };
 window.sse = {
@@ -677,6 +666,7 @@ function enableViewerMode() {
 function disableViewerMode() {
   viewerModeActive = false;
   viewerReady = false;
+  activeViewerTransform = null;
   canvasWrap.classList.remove("viewer-active");
   const viewer = getViewerInstance();
   if (viewer?.global?.camera?.camera) {
@@ -710,8 +700,9 @@ function updateViewerCamera(pose, force = false) {
 
   const headWorld = headPoseToWorldPosition(pose);
   const neutralDistance = getNeutralViewingDistance();
-  const screenWidthM = calibration.screenWidthCm * 0.01;
-  const screenHeightM = calibration.screenHeightCm * 0.01;
+  const screen = getEffectiveScreenSizeMeters();
+  const screenWidthM = screen.width;
+  const screenHeightM = screen.height;
   const near = 0.01;
   const far = 1000;
   const viewerToScreenDistance = headWorld.z;
@@ -771,12 +762,12 @@ function getPreferredSplatTransform(name) {
     return {
       autoCenter: true,
       autoScaleToScreen: true,
-      scaleFill: 1.55,
+      scaleFill: 2.8,
       alignFrontFaceToScreen: true,
       frontFaceAxis: "zMax",
       fitCameraToScene: true,
-      lookDepthFactor: 0.58,
-      rotation: [0, 0, 180],
+      lookDepthFactor: 0.72,
+      rotation: [0, 0, 0],
     };
   }
   return null;
@@ -802,7 +793,8 @@ function applyPreferredSplatTransform(transform) {
     const screenHeight = calibration.screenHeightCm * 0.01 * 0.94;
     const safeWidth = Math.max(size.x, 0.001);
     const safeHeight = Math.max(size.y, 0.001);
-    scaleValue = Math.min(screenWidth / safeWidth, screenHeight / safeHeight) * (transform.scaleFill ?? 1);
+    scaleValue =
+      Math.min(screenWidth / safeWidth, screenHeight / safeHeight) * (transform.scaleFill ?? 1) * portalZoom;
     gsplat.setLocalScale(scaleValue, scaleValue, scaleValue);
   } else if (transform.scale) {
     scaleValue = transform.scale[0];
@@ -825,14 +817,9 @@ function applyPreferredSplatTransform(transform) {
   }
   if (transform.fitCameraToScene && size) {
     const scaledDepth = size.z * scaleValue;
-    const fittedDistance = Math.max(getNeutralViewingDistance(), scaledDepth + 0.08);
-    const depthTarget = -scaledDepth * (transform.lookDepthFactor ?? 0.5);
-    const viewerCamera = viewer.global.camera;
-    viewerCamera.setPosition(0, 0, fittedDistance);
-    viewerCamera.lookAt(0, 0, depthTarget);
-    if (viewerCamera.camera) {
-      viewerCamera.camera.calculateProjection = null;
-    }
+    viewerFitDistance = getNeutralViewingDistance();
+    viewerDepthTarget = -scaledDepth * (transform.lookDepthFactor ?? 0.5);
+    syncViewerNeutralCamera();
   }
   viewer.global.app.renderNextFrame = true;
 }
@@ -871,17 +858,19 @@ function onSaveCalibration() {
   calibration.viewingDistanceCm = Math.max(20, Number(viewDistanceInput.value) || calibration.viewingDistanceCm);
   saveCalibration();
   updatePortalBaseCamera();
+  if (viewerModeActive && viewerReady) syncViewerNeutralCamera();
   updateViewerCamera(getActivePose(), true);
   setStatus("Calibration saved.");
 }
 
 function getNeutralViewingDistance() {
-  return (calibration.viewingDistanceCm * 0.01) / portalZoom;
+  return calibration.viewingDistanceCm * 0.01;
 }
 
 function headPoseToWorldPosition(pose) {
-  const screenWidthWorld = calibration.screenWidthCm * 0.01;
-  const screenHeightWorld = calibration.screenHeightCm * 0.01;
+  const screen = getEffectiveScreenSizeMeters();
+  const screenWidthWorld = screen.width;
+  const screenHeightWorld = screen.height;
   const movementScale = 1.5;
   const baseDistance = getNeutralViewingDistance();
 
@@ -975,6 +964,32 @@ function onResize() {
   saveCalibration();
   camera.aspect = Math.max(0.2, width / Math.max(1, height));
   renderer.setSize(width, height, false);
+  if (viewerModeActive && viewerReady) {
+    syncViewerNeutralCamera();
+    updateViewerCamera(getActivePose(), true);
+  }
+}
+
+function getEffectiveScreenSizeMeters() {
+  const width = calibration.screenWidthCm * 0.01;
+  const inputHeight = calibration.screenHeightCm * 0.01;
+  const viewportAspect = Math.max(0.2, calibration.pixelWidth / Math.max(1, calibration.pixelHeight));
+  const inputAspect = width / Math.max(0.001, inputHeight);
+  const mismatch = Math.abs(inputAspect - viewportAspect) / viewportAspect;
+  const correctedHeight = mismatch > 0.08 ? width / viewportAspect : inputHeight;
+  return { width, height: correctedHeight };
+}
+
+function syncViewerNeutralCamera() {
+  const viewer = getViewerInstance();
+  if (!viewer) return;
+
+  const neutralDistance = THREE.MathUtils.clamp(viewerFitDistance / Math.max(0.05, portalZoom), 0.14, 2.5);
+  const viewerCamera = viewer.global.camera;
+  viewerCamera.setPosition(0, 0, neutralDistance);
+  viewerCamera.lookAt(0, 0, viewerDepthTarget);
+  if (viewerCamera.camera) viewerCamera.camera.calculateProjection = null;
+  captureViewerBaseCamera();
 }
 
 window.addEventListener("resize", onResize);
