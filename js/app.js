@@ -304,9 +304,30 @@ async function onSplatUploadChange(event) {
   }
 
   if (activeSplatBlobUrl) URL.revokeObjectURL(activeSplatBlobUrl);
-  const prepared = await prepareFileForViewer(file, sceneFormat);
-  activeSplatBlobUrl = prepared.url;
-  await loadSplatFromUrl(activeSplatBlobUrl, prepared.label, prepared.format);
+  const directUrl = URL.createObjectURL(file);
+  activeSplatBlobUrl = directUrl;
+  const directLoaded = await loadSplatFromUrl(directUrl, file.name, sceneFormat);
+  if (directLoaded) return;
+
+  URL.revokeObjectURL(directUrl);
+  activeSplatBlobUrl = null;
+  setStatus("Direct load failed, trying SuperSplat-style normalization...");
+
+  try {
+    const normalized = await normalizeWithSplatTransform(file);
+    const normalizedUrl = URL.createObjectURL(normalized.blob);
+    activeSplatBlobUrl = normalizedUrl;
+    const normalizedLoaded = await loadSplatFromUrl(
+      normalizedUrl,
+      `${file.name} (normalized)`,
+      GaussianSplats3D.SceneFormat.Ply,
+    );
+    if (!normalizedLoaded) {
+      setStatus("Load failed after normalization.");
+    }
+  } catch (error) {
+    setStatus(`Normalization failed: ${error.message}`);
+  }
 }
 
 function onSplatScaleChange() {
@@ -331,6 +352,8 @@ async function loadSplatFromUrl(url, label, sceneFormat) {
 
       activeSplatViewer = createSplatViewer();
       activeSplatViewer.position.set(0, 0, 0);
+      // SuperSplat default orientation for most formats.
+      activeSplatViewer.rotation.set(0, 0, Math.PI);
       activeSplatViewer.scale.setScalar(activeSplatScale);
       root.add(activeSplatViewer);
 
@@ -347,7 +370,7 @@ async function loadSplatFromUrl(url, label, sceneFormat) {
       ]);
 
       setStatus(`Loaded splat: ${label} (${attempt.label})`);
-      return;
+      return true;
     } catch (error) {
       lastError = error;
     }
@@ -361,6 +384,7 @@ async function loadSplatFromUrl(url, label, sceneFormat) {
 
   const suffix = lastError?.message ? ` ${lastError.message}` : "";
   setStatus(`Splat load failed.${suffix}`);
+  return false;
 }
 
 function isSplatFile(name) {
@@ -376,26 +400,6 @@ function getSplatSceneFormat(name) {
   if (lower.endsWith(".ksplat")) return GaussianSplats3D.SceneFormat.KSplat;
   if (lower.endsWith(".spz")) return GaussianSplats3D.SceneFormat.Ply;
   return null;
-}
-
-async function prepareFileForViewer(file, originalFormat) {
-  try {
-    const normalized = await normalizeWithSplatTransform(file);
-    const url = URL.createObjectURL(normalized.blob);
-    return {
-      url,
-      label: `${file.name} (normalized)`,
-      format: GaussianSplats3D.SceneFormat.Ply,
-    };
-  } catch (error) {
-    const url = URL.createObjectURL(file);
-    setStatus(`Normalization skipped (${error.message}). Trying direct load...`);
-    return {
-      url,
-      label: file.name,
-      format: originalFormat,
-    };
-  }
 }
 
 async function normalizeWithSplatTransform(file) {
@@ -442,7 +446,7 @@ function createSplatViewer() {
   return new GaussianSplats3D.DropInViewer({
     gpuAcceleratedSort: false,
     sharedMemoryForWorkers: false,
-    sphericalHarmonicsDegree: 1,
+    sphericalHarmonicsDegree: 0,
     sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
     // Keep output stable on GitHub Pages where COOP/COEP headers are unavailable.
     integerBasedSort: false,
@@ -455,19 +459,19 @@ function buildSplatLoadAttempts(sceneFormat) {
       label: "format-locked non-progressive",
       format: sceneFormat,
       progressiveLoad: false,
-      alphaThreshold: 1,
+      alphaThreshold: 0,
     },
     {
       label: "format-locked progressive",
       format: sceneFormat,
       progressiveLoad: true,
-      alphaThreshold: 5,
+      alphaThreshold: 0,
     },
     {
       label: "auto-format non-progressive",
       format: undefined,
       progressiveLoad: false,
-      alphaThreshold: 1,
+      alphaThreshold: 0,
     },
   ];
 }
