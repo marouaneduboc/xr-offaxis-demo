@@ -24,8 +24,8 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const camera = new THREE.PerspectiveCamera(70, 1, 0.03, 200);
-const portalBasePosition = new THREE.Vector3(0, 1.1, 0.55);
-const portalBaseTarget = new THREE.Vector3(0, 0.85, -1);
+const portalBasePosition = new THREE.Vector3(0, 0.78, 0.9);
+const portalBaseTarget = new THREE.Vector3(0, 0.62, -1);
 const portalBaseQuaternion = new THREE.Quaternion();
 const portalForward = new THREE.Vector3(0, 0, -1);
 const defaultPortalPitch = -0.12;
@@ -53,7 +53,7 @@ let activePointCloudUrl = null;
 const portalCalibration = {
   screenWidthCm: 60,
   screenHeightCm: 34,
-  viewingDistanceCm: 55,
+  viewingDistanceCm: 90,
   lateralTravelRatio: 0.32,
   verticalTravelRatio: 0.24,
   depthTravelRatio: 0.12,
@@ -83,14 +83,14 @@ grid.material.transparent = true;
 scene.add(grid);
 
 const character = createCharacter();
-character.position.set(0, 0, -2);
+character.position.set(0, -0.18, -2.8);
 scene.add(character);
 
 const debugMarker = new THREE.Mesh(
   new THREE.BoxGeometry(0.18, 0.18, 0.18),
   new THREE.MeshStandardMaterial({ color: 0xff7b5c, emissive: 0x662211, emissiveIntensity: 0.5 }),
 );
-debugMarker.position.set(0, 1.0, -2.5);
+debugMarker.position.set(0, 0.72, -3.1);
 scene.add(debugMarker);
 
 const faceTracker = new FaceTracker({
@@ -384,7 +384,7 @@ async function loadPointCloudFromUrl(url, label) {
     });
 
     activePointCloud = new THREE.Points(geometry, material);
-    activePointCloud.position.set(0, 1.0, -2.5);
+    activePointCloud.position.set(0, 0.72, -3.1);
     root.add(activePointCloud);
     setStatus(`Loaded point cloud: ${label}`);
   } catch (error) {
