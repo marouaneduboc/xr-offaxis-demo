@@ -1,5 +1,13 @@
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 import * as GaussianSplats3D from "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/+esm";
+import {
+  getInputFormat,
+  getOutputFormat,
+  MemoryFileSystem,
+  MemoryReadFileSystem,
+  readFile,
+  writeFile,
+} from "https://cdn.jsdelivr.net/npm/@playcanvas/splat-transform@1.9.2/dist/index.mjs";
 import { FaceTracker } from "./face-tracker.js";
 
 const canvas = document.getElementById("scene-canvas");
@@ -291,13 +299,14 @@ async function onSplatUploadChange(event) {
   if (!file) return;
   const sceneFormat = getSplatSceneFormat(file.name);
   if (!sceneFormat) {
-    setStatus("Please select a .ply, .splat, or .ksplat file.");
+    setStatus("Please select a .ply, .compressed.ply, .splat, .ksplat, or .spz file.");
     return;
   }
 
   if (activeSplatBlobUrl) URL.revokeObjectURL(activeSplatBlobUrl);
-  activeSplatBlobUrl = URL.createObjectURL(file);
-  await loadSplatFromUrl(activeSplatBlobUrl, file.name, sceneFormat);
+  const prepared = await prepareFileForViewer(file, sceneFormat);
+  activeSplatBlobUrl = prepared.url;
+  await loadSplatFromUrl(activeSplatBlobUrl, prepared.label, prepared.format);
 }
 
 function onSplatScaleChange() {
@@ -361,10 +370,72 @@ function isSplatFile(name) {
 
 function getSplatSceneFormat(name) {
   const lower = name.toLowerCase();
+  if (lower.endsWith(".compressed.ply")) return GaussianSplats3D.SceneFormat.Ply;
   if (lower.endsWith(".ply")) return GaussianSplats3D.SceneFormat.Ply;
   if (lower.endsWith(".splat")) return GaussianSplats3D.SceneFormat.Splat;
   if (lower.endsWith(".ksplat")) return GaussianSplats3D.SceneFormat.KSplat;
+  if (lower.endsWith(".spz")) return GaussianSplats3D.SceneFormat.Ply;
   return null;
+}
+
+async function prepareFileForViewer(file, originalFormat) {
+  try {
+    const normalized = await normalizeWithSplatTransform(file);
+    const url = URL.createObjectURL(normalized.blob);
+    return {
+      url,
+      label: `${file.name} (normalized)`,
+      format: GaussianSplats3D.SceneFormat.Ply,
+    };
+  } catch (error) {
+    const url = URL.createObjectURL(file);
+    setStatus(`Normalization skipped (${error.message}). Trying direct load...`);
+    return {
+      url,
+      label: file.name,
+      format: originalFormat,
+    };
+  }
+}
+
+async function normalizeWithSplatTransform(file) {
+  const inputName = file.name;
+  const readFs = new MemoryReadFileSystem();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  readFs.set(inputName, bytes);
+
+  const tables = await readFile({
+    filename: inputName,
+    inputFormat: getInputFormat(inputName),
+    options: {
+      iterations: 10,
+      lodSelect: [0],
+      unbundled: false,
+      lodChunkCount: 512,
+      lodChunkExtent: 16,
+    },
+    params: [],
+    fileSystem: readFs,
+  });
+  if (!tables?.length) throw new Error("No splat table parsed.");
+
+  const outputName = "normalized.ply";
+  const outFs = new MemoryFileSystem();
+  await writeFile(
+    {
+      filename: outputName,
+      outputFormat: getOutputFormat(outputName, {}),
+      dataTable: tables[0],
+      options: {},
+    },
+    outFs,
+  );
+  const normalizedBytes = outFs.results.get(outputName);
+  if (!normalizedBytes) throw new Error("PLY normalization failed.");
+
+  return {
+    blob: new Blob([normalizedBytes], { type: "application/ply" }),
+  };
 }
 
 function createSplatViewer() {
