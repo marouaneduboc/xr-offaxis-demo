@@ -106,11 +106,16 @@ button {
   padding: 0.55rem 0.7rem;
   cursor: pointer;
   font-weight: 600;
+  transition: transform 0.08s ease, border-color 0.12s ease, background 0.12s ease;
 }
 
 button:hover {
   border-color: var(--accent);
   background: rgba(110, 168, 255, 0.32);
+}
+
+button:active {
+  transform: translateY(1px) scale(0.99);
 }
 
 .manual-controls {
@@ -129,18 +134,40 @@ button:hover {
 
 .manual-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
 }
 
 .nudge-btn {
-  padding: 0.5rem 0.4rem;
+  min-height: 2.7rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 12px;
+  border: 1px solid rgba(142, 188, 255, 0.45);
+  background: linear-gradient(180deg, rgba(92, 153, 255, 0.34), rgba(66, 117, 216, 0.3));
+  text-align: left;
+  font-size: 0.86rem;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+#manual-center-btn {
+  min-height: 2.45rem;
+  border-color: rgba(167, 210, 255, 0.5);
+  background: rgba(88, 151, 255, 0.3);
 }
 
 #manual-offset-text {
   margin: 0;
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.manual-hint {
+  margin: 0;
+  color: #c9d9ff;
+  font-size: 0.76rem;
+  line-height: 1.25;
+  opacity: 0.9;
 }
 
 #status-text {
