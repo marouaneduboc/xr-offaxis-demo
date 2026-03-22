@@ -773,11 +773,10 @@ function updateViewerCamera(pose, force = false) {
     .applyQuaternion(viewerBaseQuaternion)
     .applyQuaternion(viewerDeltaQuaternion)
     .applyQuaternion(viewerPoseQuaternion);
-  viewerPosition
-    .copy(viewerBasePosition)
-    .addScaledVector(viewerRight, headWorld.x)
-    .addScaledVector(viewerUp, headWorld.y)
-    .addScaledVector(viewerForward, neutralDistance - headWorld.z);
+  viewerPosition.copy(viewerBasePosition).addScaledVector(viewerRight, headWorld.x).addScaledVector(viewerUp, headWorld.y);
+  if (!activeViewerTransform.cameraSpace) {
+    viewerPosition.addScaledVector(viewerForward, neutralDistance - headWorld.z);
+  }
   viewerTarget.copy(viewerPosition).add(viewerForward);
 
   const viewerCamera = viewer.global.camera;
