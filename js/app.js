@@ -791,7 +791,7 @@ function getPreferredSplatTransform(name) {
       frontFaceAxis: "zMax",
       fitCameraToScene: true,
       lookDepthFactor: 1.0,
-      rotation: [0, 0, 0],
+      rotation: [0, 180, 0],
     };
   }
   return null;
