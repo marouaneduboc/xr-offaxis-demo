@@ -554,6 +554,19 @@ async function loadGaussianSplatWithViewer(blob, label, contentName = label, pre
       applyPreferredSplatTransform(preferredTransform);
       if (!preferredTransform.cameraSpace) {
         syncViewerNeutralCamera();
+      } else {
+        // Some loads report first-frame before gsplat AABB is fully ready.
+        // Re-apply camera-space transform shortly after to guarantee final pose.
+        setTimeout(() => {
+          if (viewerModeActive && viewerReady && activeViewerTransform?.cameraSpace) {
+            applyPreferredSplatTransform(activeViewerTransform);
+          }
+        }, 220);
+        setTimeout(() => {
+          if (viewerModeActive && viewerReady && activeViewerTransform?.cameraSpace) {
+            applyPreferredSplatTransform(activeViewerTransform);
+          }
+        }, 900);
       }
     } else {
       // Keep SuperSplat's native auto-frame for files without custom transform.
@@ -869,6 +882,17 @@ function applyPreferredSplatTransform(transform) {
       viewerDepthTarget = -desiredDepth;
       syncViewerNeutralCamera();
     }
+  } else if (transform.cameraSpace) {
+    // Fallback when AABB is not available yet: still force a stable cone-facing camera.
+    const farDepth = Math.max(4, viewerDepthTarget || 8);
+    viewerFitDistance = 0.03;
+    viewerDepthTarget = farDepth * (transform.lookDepthFactor ?? 1.0);
+    const lookY = farDepth * (transform.lookYOffsetFactor ?? 0);
+    const viewerCamera = viewer.global.camera;
+    viewerCamera.setPosition(0, 0, viewerFitDistance);
+    viewerCamera.lookAt(0, lookY, viewerDepthTarget);
+    if (viewerCamera.camera) viewerCamera.camera.calculateProjection = null;
+    captureViewerBaseCamera();
   }
   viewer.global.app.renderNextFrame = true;
 }
