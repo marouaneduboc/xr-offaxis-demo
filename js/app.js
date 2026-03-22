@@ -741,7 +741,7 @@ function getViewerInstance() {
 
 function updateViewerCamera(pose, force = false) {
   if (!viewerModeActive || !viewerReady) return;
-  if (!activeViewerTransform || activeViewerTransform.cameraSpace) return;
+  if (!activeViewerTransform) return;
 
   const viewer = getViewerInstance();
   if (!viewer) return;
@@ -1062,7 +1062,7 @@ function syncViewerNeutralCamera() {
     const lookDepthFactor = Math.max(0.001, activeViewerTransform.lookDepthFactor ?? 1);
     const lookYOffsetFactor = activeViewerTransform.lookYOffsetFactor ?? 0;
     const lookY = (viewerDepthTarget / lookDepthFactor) * lookYOffsetFactor;
-    const neutralDistance = THREE.MathUtils.clamp(viewerFitDistance / Math.max(0.05, portalZoom), 0.01, 2.5);
+    const neutralDistance = THREE.MathUtils.clamp(viewerFitDistance / Math.max(0.05, portalZoom), 0.003, 2.5);
     viewerCamera.setPosition(portalPanX, portalPanY, neutralDistance);
     viewerCamera.lookAt(portalPanX, portalPanY + lookY, viewerDepthTarget);
     if (viewerCamera.camera) viewerCamera.camera.calculateProjection = null;
