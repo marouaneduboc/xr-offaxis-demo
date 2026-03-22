@@ -786,12 +786,10 @@ function getPreferredSplatTransform(name) {
     return {
       autoCenter: true,
       autoScaleToScreen: true,
-      scaleFill: 1.7,
-      alignFrontFaceToScreen: true,
-      frontFaceAxis: "zMax",
+      scaleFill: 1.25,
       fitCameraToScene: true,
-      lookDepthFactor: 1.0,
-      rotation: [0, 180, 0],
+      lookDepthFactor: 0.9,
+      rotation: [-90, 0, 0],
     };
   }
   return null;
