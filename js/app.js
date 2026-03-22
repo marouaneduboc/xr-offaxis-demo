@@ -550,8 +550,18 @@ async function loadGaussianSplatWithViewer(blob, label, contentName = label, pre
     portalPitch = defaultPortalPitch;
     updatePortalBaseCamera();
     activeViewerTransform = preferredTransform;
-    applyPreferredSplatTransform(preferredTransform);
-    syncViewerNeutralCamera();
+    if (preferredTransform) {
+      applyPreferredSplatTransform(preferredTransform);
+      if (!preferredTransform.cameraSpace) {
+        syncViewerNeutralCamera();
+      }
+    } else {
+      // Keep SuperSplat's native auto-frame for files without custom transform.
+      captureViewerBaseCamera();
+      const baselineDistance = viewerBasePosition.length();
+      viewerFitDistance = Math.max(0.2, baselineDistance || getNeutralViewingDistance());
+      viewerDepthTarget = -Math.max(0.2, viewerFitDistance * 0.9);
+    }
     lockViewerCamera();
     updateViewerCamera(getActivePose(), true);
     setStatus(`Loaded Gaussian splat: ${label}`);
@@ -718,6 +728,7 @@ function getViewerInstance() {
 
 function updateViewerCamera(pose, force = false) {
   if (!viewerModeActive || !viewerReady) return;
+  if (!activeViewerTransform || activeViewerTransform.cameraSpace) return;
 
   const viewer = getViewerInstance();
   if (!viewer) return;
@@ -784,12 +795,13 @@ function getPreferredSplatTransform(name) {
   const lower = name.toLowerCase();
   if (lower.endsWith(".ply") || lower.endsWith(".compressed.ply")) {
     return {
-      autoCenter: true,
-      autoScaleToScreen: true,
-      scaleFill: 1.25,
+      cameraSpace: true,
+      position: [0, 0, 0],
+      rotation: [0, 0, 180],
+      scale: [1, 1, 1],
       fitCameraToScene: true,
-      lookDepthFactor: 0.9,
-      rotation: [-90, 0, 0],
+      lookDepthFactor: 0.95,
+      lookYOffsetFactor: -0.22,
     };
   }
   return null;
@@ -838,12 +850,25 @@ function applyPreferredSplatTransform(transform) {
     gsplat.setLocalEulerAngles(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
   }
   if (transform.fitCameraToScene && size) {
-    const screen = getEffectiveScreenSizeMeters();
-    const scaledDepth = size.z * scaleValue;
-    const desiredDepth = Math.max(screen.height, scaledDepth * (transform.lookDepthFactor ?? 1.0));
-    viewerFitDistance = Math.max(0.24, desiredDepth * 1.05);
-    viewerDepthTarget = -desiredDepth;
-    syncViewerNeutralCamera();
+    if (transform.cameraSpace && aabb?.center && aabb?.halfExtents) {
+      const nearDepth = Math.max(0.2, aabb.center.z - aabb.halfExtents.z);
+      const farDepth = Math.max(nearDepth + 0.2, aabb.center.z + aabb.halfExtents.z);
+      viewerFitDistance = 0.03;
+      viewerDepthTarget = farDepth * (transform.lookDepthFactor ?? 1.0);
+      const lookY = farDepth * (transform.lookYOffsetFactor ?? 0);
+      const viewerCamera = viewer.global.camera;
+      viewerCamera.setPosition(0, 0, viewerFitDistance);
+      viewerCamera.lookAt(0, lookY, viewerDepthTarget);
+      if (viewerCamera.camera) viewerCamera.camera.calculateProjection = null;
+      captureViewerBaseCamera();
+    } else {
+      const screen = getEffectiveScreenSizeMeters();
+      const scaledDepth = size.z * scaleValue;
+      const desiredDepth = Math.max(screen.height, scaledDepth * (transform.lookDepthFactor ?? 1.0));
+      viewerFitDistance = Math.max(0.24, desiredDepth * 1.05);
+      viewerDepthTarget = -desiredDepth;
+      syncViewerNeutralCamera();
+    }
   }
   viewer.global.app.renderNextFrame = true;
 }
