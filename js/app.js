@@ -949,7 +949,7 @@ function headPoseToWorldPosition(pose) {
   return {
     x: -(pose.x - 0.5) * screenWidthWorld * movementScale,
     y: -(pose.y - 0.5) * screenHeightWorld * movementScale,
-    z: THREE.MathUtils.clamp(baseDistance * (1 / pose.z), 0.14, 2.5),
+    z: THREE.MathUtils.clamp(baseDistance * pose.z, 0.14, 2.5),
   };
 }
 
