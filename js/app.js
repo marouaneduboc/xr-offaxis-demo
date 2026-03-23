@@ -945,13 +945,11 @@ function headPoseToWorldPosition(pose) {
   const screenHeightWorld = screen.height;
   const movementScale = 1.5 * parallaxStrength;
   const baseDistance = getNeutralViewingDistance();
-  const depthGain = isLikelyMobile() ? 1.15 : 2.4;
-  const normalizedDepth = 1 + (pose.z - 1) * depthGain;
 
   return {
     x: -(pose.x - 0.5) * screenWidthWorld * movementScale,
     y: -(pose.y - 0.5) * screenHeightWorld * movementScale,
-    z: THREE.MathUtils.clamp(baseDistance * normalizedDepth, 0.14, 2.5),
+    z: THREE.MathUtils.clamp(baseDistance * pose.z, 0.14, 2.5),
   };
 }
 
